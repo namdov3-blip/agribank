@@ -78,7 +78,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const totalAmount = transaction.compensation.totalApproved + interest + supplementary;
 
         // Generate secure token
-        const token = generateQRToken(id);
+        // If previewDate (disbursementDate override) is provided, embed it into the QR token
+        // so that the confirm API can use the same date to compute interest as on the printed phiếu chi.
+        const previewDateStr = previewDate && typeof previewDate === 'string' ? previewDate : undefined;
+        const token = generateQRToken(id, previewDateStr);
 
         // Get frontend URL dynamically from request
         const protocol = req.headers['x-forwarded-proto'] || 'https';

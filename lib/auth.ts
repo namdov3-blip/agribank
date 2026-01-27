@@ -70,15 +70,28 @@ export async function authMiddleware(
 }
 
 // Generate secure token for QR code
-export function generateQRToken(transactionId: string): string {
-    return jwt.sign({ transactionId, type: 'qr-confirm' }, JWT_SECRET, { expiresIn: '24h' });
+// Optional disbursementDate (yyyy-MM-dd) is embedded so that the confirm API
+// can recompute interest using the exact same date as the printed phiếu chi.
+export function generateQRToken(transactionId: string, disbursementDate?: string): string {
+    return jwt.sign(
+        { transactionId, type: 'qr-confirm', disbursementDate },
+        JWT_SECRET,
+        { expiresIn: '24h' }
+    );
 }
 
-export function verifyQRToken(token: string): { transactionId: string } | null {
+export function verifyQRToken(token: string): { transactionId: string; disbursementDate?: string } | null {
     try {
-        const payload = jwt.verify(token, JWT_SECRET) as { transactionId: string; type: string };
+        const payload = jwt.verify(token, JWT_SECRET) as {
+            transactionId: string;
+            type: string;
+            disbursementDate?: string;
+        };
         if (payload.type !== 'qr-confirm') return null;
-        return { transactionId: payload.transactionId };
+        return {
+            transactionId: payload.transactionId,
+            disbursementDate: payload.disbursementDate
+        };
     } catch {
         return null;
     }

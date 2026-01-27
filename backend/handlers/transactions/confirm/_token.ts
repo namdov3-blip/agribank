@@ -3,7 +3,7 @@ import connectDB from '../../../../lib/mongodb';
 import { Transaction, Project, BankTransaction, AuditLog, Settings } from '../../../../lib/models';
 import { verifyQRToken, authMiddleware } from '../../../../lib/auth';
 import { toZonedTime } from 'date-fns-tz';
-import { calculateInterest, getVNStartOfDay } from '../../../../lib/utils/interest';
+import { calculateInterest, getVNStartOfDay, fromVNTime } from '../../../../lib/utils/interest';
 
 const VN_TIMEZONE = 'Asia/Ho_Chi_Minh';
 
@@ -40,7 +40,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             return res.status(400).json({ error: 'Token không hợp lệ hoặc đã hết hạn' });
         }
 
-        const { transactionId } = payload;
+        const { transactionId, disbursementDate } = payload;
 
         const transaction = await (Transaction as any).findById(transactionId);
         if (!transaction) {
@@ -53,11 +53,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             const settings = await (Settings as any).findOne({ key: 'global' }) || { interestRate: 6.5 };
             const interestRate = settings.interestRate;
 
-            // Use disbursementDate if set, otherwise use today (VN timezone)
+            // Use disbursementDate embedded in QR token if available (from phiếu chi preview),
+            // otherwise fall back to transaction.disbursementDate, then to "today" in VN timezone.
             const now = getVNNow();
-            const interestEndDate = transaction.disbursementDate 
-                ? getVNStartOfDay(transaction.disbursementDate)
-                : getVNStartOfDay(now);
+            const interestEndDate = disbursementDate
+                ? getVNStartOfDay(disbursementDate)
+                : (transaction.disbursementDate
+                    ? getVNStartOfDay(transaction.disbursementDate)
+                    : getVNStartOfDay(now));
             
             const baseDate = transaction.effectiveInterestDate || project?.interestStartDate;
             const baseDateVN = baseDate ? getVNStartOfDay(baseDate) : null;
@@ -112,12 +115,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             if (!baseDateVN) {
                 return res.status(400).json({ error: 'Không có ngày bắt đầu tính lãi' });
             }
-            
+
+            // Sử dụng cùng ngày tính lãi như khi hiển thị phiếu chi/QR:
+            // ưu tiên ngày được nhúng trong token QR, nếu không có thì dùng ngày giải ngân của giao dịch,
+            // cuối cùng mới dùng ngày hiện tại.
+            const interestEndDate = disbursementDate
+                ? getVNStartOfDay(disbursementDate)
+                : (transaction.disbursementDate
+                    ? getVNStartOfDay(transaction.disbursementDate)
+                    : getVNStartOfDay(now));
+
             const interest = calculateInterest(
                 transaction.compensation.totalApproved,
                 interestRate,
                 baseDateVN,
-                getVNStartOfDay(now)
+                interestEndDate
             );
             const supplementary = transaction.supplementaryAmount || 0;
             const totalFinal = transaction.compensation.totalApproved + interest + supplementary;
@@ -133,12 +145,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             const openingBalance = settingsForBalance?.bankOpeningBalance || 0;
             const currentBalance = lastBankTx?.runningBalance || openingBalance;
 
+            // Determine disbursement date for storage:
+            // convert VN start-of-day date to UTC if we used a specific disbursementDate,
+            // otherwise use the current time.
+            const disbursementDateVN = interestEndDate;
+            const disbursementDateUTC = disbursementDate
+                ? fromVNTime(disbursementDateVN)
+                : new Date();
+
             // Create withdrawal (store as UTC, but use VN timezone for calculation)
-            const nowUTC = new Date();
             await (BankTransaction as any).create({
                 type: 'Rút tiền',
                 amount: -totalFinal,
-                date: nowUTC,
+                date: disbursementDateUTC,
                 note: `Chi trả qua QR: ${project?.code} - Hộ: ${transaction.household.name}`,
                 createdBy: confirmedBy || 'QR Scan',
                 runningBalance: currentBalance - totalFinal,
@@ -148,10 +167,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
             // Update transaction (store as UTC, but use VN timezone for calculation)
             transaction.status = 'Đã giải ngân';
-            transaction.disbursementDate = nowUTC;
+            transaction.disbursementDate = disbursementDateUTC;
             transaction.disbursedTotal = totalFinal; // Store the exact amount for refund
             transaction.history.push({
-                timestamp: now,
+                timestamp: disbursementDateVN,
                 action: 'Xác nhận chi trả qua QR',
                 details: `Giải ngân qua quét mã QR. Tổng: ${formatCurrency(totalFinal)}`,
                 totalAmount: totalFinal,
@@ -175,7 +194,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                     transactionId,
                     household: transaction.household.name,
                     totalAmount: totalFinal,
-                    disbursementDate: now
+                    disbursementDate: disbursementDateVN
                 }
             });
         }
