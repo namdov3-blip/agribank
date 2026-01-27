@@ -1,8 +1,8 @@
-import React, { useRef, useState } from 'react';
+import React, { useRef, useState, useMemo } from 'react';
 import api from '../services/api';
 import { GlassCard } from '../components/GlassCard';
 import { formatDate, formatCurrency, calculateInterest, calculateInterestWithRateChange } from '../utils/helpers';
-import { Plus, FolderKanban, Coins, Loader2, X, Check, FileSpreadsheet, Edit2, Eye, Calendar, Save, Tag, Type, Trash2 } from 'lucide-react';
+import { Plus, FolderKanban, Coins, Loader2, X, Check, FileSpreadsheet, Edit2, Eye, Calendar, Save, Tag, Type, Trash2, Search, ChevronLeft, ChevronRight } from 'lucide-react';
 import { Project, Transaction, TransactionStatus } from '../types';
 
 interface ProjectsProps {
@@ -54,6 +54,11 @@ export const Projects: React.FC<ProjectsProps> = ({
   // State for Editing
   const [editingProject, setEditingProject] = useState<Project | null>(null);
 
+  // State for Search and Pagination
+  const [searchTerm, setSearchTerm] = useState('');
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 10;
+
   // Helper function to calculate interest with rate change if configured (match Dashboard)
   const calculateInterestSmart = React.useCallback((
     principal: number,
@@ -75,30 +80,21 @@ export const Projects: React.FC<ProjectsProps> = ({
     return calculateInterest(principal, interestRate, baseDate, endDate);
   }, [interestRate, interestRateChangeDate, interestRateBefore, interestRateAfter]);
 
-  // Stats Calculation - tính tổng giá trị thực tế bao gồm tiền bổ sung + lãi phát sinh
-  const totalProjects = projects.length;
-
-  // Tính tổng giá trị ban đầu (không có lãi, không có tiền bổ sung)
-  const totalInitialValue = projects.reduce((acc, p) => {
-    const projectTrans = transactions.filter(t => t.projectId === p.id);
-    const initialTotal = projectTrans.reduce((sum, t) => sum + t.compensation.totalApproved, 0);
-    return acc + (initialTotal > 0 ? initialTotal : p.totalBudget);
-  }, 0);
-
-  // Tính tổng giá trị hiện tại (bao gồm lãi + tiền bổ sung)
-  // Match Dashboard logic: use disbursedTotal for DISBURSED transactions
-  const totalValue = projects.reduce((acc, p) => {
-    const projectTrans = transactions.filter(t => t.projectId === p.id);
+  // Helper function to calculate actual total budget for a project
+  const getProjectActualTotal = React.useCallback((project: Project): number => {
+    const projectTrans = transactions.filter(t => {
+      const pIdStr = (t.projectId && (t.projectId as any)._id) ? (t.projectId as any)._id.toString() : t.projectId?.toString();
+      return pIdStr === project.id || pIdStr === (project as any)._id;
+    });
+    
     const actualTotal = projectTrans.reduce((sum, t) => {
       const supplementary = t.supplementaryAmount || 0;
       
-      // For disbursed transactions: prefer disbursedTotal (matching Dashboard)
       if (t.status === TransactionStatus.DISBURSED && (t as any).disbursedTotal) {
         return sum + (t as any).disbursedTotal;
       }
       
-      // Fallback: calculate interest
-      const baseDate = t.effectiveInterestDate || p.interestStartDate;
+      const baseDate = t.effectiveInterestDate || project.interestStartDate;
       let interest = 0;
       if (t.status === TransactionStatus.DISBURSED && t.disbursementDate) {
         interest = calculateInterestSmart(t.compensation.totalApproved, baseDate, new Date(t.disbursementDate));
@@ -107,7 +103,75 @@ export const Projects: React.FC<ProjectsProps> = ({
       }
       return sum + t.compensation.totalApproved + interest + supplementary;
     }, 0);
-    return acc + (actualTotal > 0 ? actualTotal : p.totalBudget);
+    
+    return actualTotal > 0 ? actualTotal : project.totalBudget;
+  }, [transactions, calculateInterestSmart]);
+
+  // Filter projects based on search term
+  const filteredProjects = useMemo(() => {
+    if (!searchTerm.trim()) return projects;
+
+    const term = searchTerm.toLowerCase().trim();
+    
+    return projects.filter(project => {
+      // Search by project code
+      if (project.code?.toLowerCase().includes(term)) return true;
+      
+      // Search by interest start date (Ngày GN)
+      if (project.interestStartDate) {
+        const dateStr = formatDate(project.interestStartDate).toLowerCase();
+        if (dateStr.includes(term)) return true;
+      }
+      
+      // Search by total budget or actual total value
+      const actualTotal = getProjectActualTotal(project);
+      const budgetStr = formatCurrency(actualTotal).toLowerCase();
+      const budgetNum = actualTotal.toString();
+      if (budgetStr.includes(term) || budgetNum.includes(term)) return true;
+      
+      // Also search by initial budget
+      const initialBudgetStr = formatCurrency(project.totalBudget).toLowerCase();
+      const initialBudgetNum = project.totalBudget.toString();
+      if (initialBudgetStr.includes(term) || initialBudgetNum.includes(term)) return true;
+      
+      return false;
+    });
+  }, [projects, searchTerm, getProjectActualTotal]);
+
+  // Pagination Logic
+  const totalPages = Math.ceil(filteredProjects.length / itemsPerPage);
+  const paginatedProjects = filteredProjects.slice(
+    (currentPage - 1) * itemsPerPage,
+    currentPage * itemsPerPage
+  );
+
+  const handlePageChange = (newPage: number) => {
+    if (newPage >= 1 && newPage <= totalPages) {
+      setCurrentPage(newPage);
+    }
+  };
+
+  // Reset to page 1 when search changes
+  React.useEffect(() => {
+    setCurrentPage(1);
+  }, [searchTerm]);
+
+  // Stats Calculation - tính tổng giá trị thực tế bao gồm tiền bổ sung + lãi phát sinh
+  const totalProjects = filteredProjects.length;
+
+  // Tính tổng giá trị ban đầu (không có lãi, không có tiền bổ sung) - chỉ tính cho filtered projects
+  const totalInitialValue = filteredProjects.reduce((acc, p) => {
+    const projectTrans = transactions.filter(t => {
+      const pIdStr = (t.projectId && (t.projectId as any)._id) ? (t.projectId as any)._id.toString() : t.projectId?.toString();
+      return pIdStr === p.id || pIdStr === (p as any)._id;
+    });
+    const initialTotal = projectTrans.reduce((sum, t) => sum + t.compensation.totalApproved, 0);
+    return acc + (initialTotal > 0 ? initialTotal : p.totalBudget);
+  }, 0);
+
+  // Tính tổng giá trị hiện tại (bao gồm lãi + tiền bổ sung) - chỉ tính cho filtered projects
+  const totalValue = filteredProjects.reduce((acc, p) => {
+    return acc + getProjectActualTotal(p);
   }, 0);
 
   const handleNewProjectClick = () => {
@@ -292,7 +356,9 @@ export const Projects: React.FC<ProjectsProps> = ({
           <div>
             <p className="text-[11px] font-semibold text-slate-600 uppercase tracking-widest">Tổng số dự án</p>
             <p className="text-xl font-semibold text-black tracking-tight mt-0.5">{totalProjects}</p>
-            <p className="text-[11px] font-medium text-slate-500 mt-1">Đã tải lên hệ thống</p>
+            <p className="text-[11px] font-medium text-slate-500 mt-1">
+              {searchTerm ? `Kết quả tìm kiếm` : 'Đã tải lên hệ thống'}
+            </p>
           </div>
         </GlassCard>
 
@@ -313,6 +379,43 @@ export const Projects: React.FC<ProjectsProps> = ({
         </GlassCard>
       </div>
 
+      {/* Search Bar */}
+      <GlassCard className="p-4 border-slate-200">
+        <div className="flex flex-col gap-3">
+          <div className="flex items-center gap-3">
+            <div className="flex-1 relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
+              <input
+                type="text"
+                placeholder="Tìm theo Mã dự án, Ngày GN, Tổng ngân sách/Tổng giá trị dự án..."
+                className="w-full bg-slate-50 border border-slate-200 rounded-lg pl-9 pr-4 py-2 text-sm font-bold text-black focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 transition-all placeholder:text-slate-400"
+                value={searchTerm}
+                onChange={(e) => {
+                  setSearchTerm(e.target.value);
+                  setCurrentPage(1);
+                }}
+              />
+            </div>
+            {searchTerm && (
+              <button
+                onClick={() => {
+                  setSearchTerm('');
+                  setCurrentPage(1);
+                }}
+                className="px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm font-semibold text-slate-700 hover:bg-slate-50 shadow-sm"
+              >
+                Xóa lọc
+              </button>
+            )}
+          </div>
+          {searchTerm && (
+            <div className="text-xs font-medium text-slate-500">
+              Tìm thấy <span className="font-bold text-blue-600">{totalProjects}</span> dự án khớp với "{searchTerm}"
+            </div>
+          )}
+        </div>
+      </GlassCard>
+
       {/* MAIN PROJECT TABLE */}
       <GlassCard className="overflow-hidden p-0 border-slate-300 shadow-sm mt-6">
         <div className="overflow-x-auto">
@@ -330,7 +433,7 @@ export const Projects: React.FC<ProjectsProps> = ({
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-300">
-              {projects.map((project, index) => {
+              {paginatedProjects.map((project, index) => {
                 // Calculate Progress - bao gồm cả tiền bổ sung + lãi phát sinh
                 const projectTrans = transactions.filter(t => {
                   const pIdStr = (t.projectId && (t.projectId as any)._id) ? (t.projectId as any)._id.toString() : t.projectId?.toString();
@@ -377,7 +480,9 @@ export const Projects: React.FC<ProjectsProps> = ({
 
                 return (
                   <tr key={project.id} className="hover:bg-blue-50/30 transition-colors">
-                    <td className="px-4 py-3 text-center text-slate-700 font-bold border-r border-slate-200">{index + 1}</td>
+                    <td className="px-4 py-3 text-center text-slate-700 font-bold border-r border-slate-200">
+                      {(currentPage - 1) * itemsPerPage + index + 1}
+                    </td>
                     <td className="px-4 py-3 border-r border-slate-200">
                       <span className="text-[11px] font-mono font-bold text-slate-800 bg-slate-100 px-2 py-0.5 rounded border border-slate-200">
                         {project.code}
@@ -443,6 +548,40 @@ export const Projects: React.FC<ProjectsProps> = ({
             </tbody>
           </table>
         </div>
+
+        {/* Pagination Controls */}
+        {totalPages > 1 && (
+          <div className="p-4 bg-white/50 border-t border-slate-200 flex justify-between items-center backdrop-blur-sm">
+            <div className="text-xs font-bold text-slate-500">
+              Hiển thị {(currentPage - 1) * itemsPerPage + 1} - {Math.min(currentPage * itemsPerPage, filteredProjects.length)} trên tổng số {filteredProjects.length} dự án
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={() => handlePageChange(currentPage - 1)}
+                disabled={currentPage === 1}
+                className="p-1.5 rounded-lg border border-slate-200 text-slate-600 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-slate-100 transition-colors"
+              >
+                <ChevronLeft size={16} strokeWidth={2} />
+              </button>
+              <div className="flex items-center justify-center px-3 bg-white border border-slate-200 rounded-lg text-xs font-bold text-blue-700 shadow-sm">
+                Trang {currentPage} / {totalPages}
+              </div>
+              <button
+                onClick={() => handlePageChange(currentPage + 1)}
+                disabled={currentPage === totalPages}
+                className="p-1.5 rounded-lg border border-slate-200 text-slate-600 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-slate-100 transition-colors"
+              >
+                <ChevronRight size={16} strokeWidth={2} />
+              </button>
+            </div>
+          </div>
+        )}
+
+        {filteredProjects.length === 0 && (
+          <div className="p-12 text-center text-slate-400 font-medium">
+            {searchTerm ? `Không tìm thấy dự án nào khớp với "${searchTerm}"` : 'Chưa có dự án nào'}
+          </div>
+        )}
       </GlassCard>
 
       {/* EDIT PROJECT MODAL */}
