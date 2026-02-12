@@ -353,7 +353,16 @@ export const TransactionList: React.FC<TransactionListProps> = ({
 
   const handleDownload = () => {
     // Export filtered transactions based on current search and date filters
-    exportTransactionsToExcel(filtered, projects, interestRate, interestRateChangeDate, interestRateBefore, interestRateAfter);
+    // Pass date filters to ensure Excel matches UI display (Point-in-Time logic)
+    exportTransactionsToExcel(
+      filtered, 
+      projects, 
+      interestRate, 
+      interestRateChangeDate, 
+      interestRateBefore, 
+      interestRateAfter,
+      endDate || null  // Pass endDate for Point-in-Time calculations
+    );
   };
 
   const StatBox = ({ label, value, subValue, icon: Icon, colorClass }: any) => (
