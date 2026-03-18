@@ -60,8 +60,7 @@ export const TransactionList: React.FC<TransactionListProps> = ({
     return baseDate;
   }, [resolveProject]);
 
-  const isWithinDateRange = React.useCallback((dateStr?: string) => {
-    if (!startDate && !endDate) return true;
+  const isDateWithinRange = React.useCallback((dateStr?: string) => {
     if (!dateStr) return false;
     const value = new Date(dateStr);
     if (isNaN(value.getTime())) return false;
@@ -75,6 +74,25 @@ export const TransactionList: React.FC<TransactionListProps> = ({
     }
     return true;
   }, [startDate, endDate]);
+
+  const isTransactionInDateRange = React.useCallback((t: Transaction, project?: Project) => {
+    if (!startDate && !endDate) return true;
+    const interestDate = t.effectiveInterestDate || project?.interestStartDate || (project as any)?.startDate;
+    if (isDateWithinRange(interestDate)) return true;
+    if (t.disbursementDate && isDateWithinRange(t.disbursementDate)) return true;
+    // Also include if the transaction spans the filter period:
+    // interest start date is BEFORE the range AND (not disbursed OR disbursed AFTER range start)
+    if (startDate && interestDate) {
+      const interestTime = new Date(interestDate).getTime();
+      const filterStart = new Date(startDate).getTime();
+      if (interestTime < filterStart) {
+        if (!t.disbursementDate) return true;
+        const disbTime = new Date(t.disbursementDate).getTime();
+        if (disbTime >= filterStart) return true;
+      }
+    }
+    return false;
+  }, [startDate, endDate, isDateWithinRange]);
 
   // Point-in-Time helpers: Determine effective status and calculation date at filter time
   const getEffectiveStatus = React.useCallback((t: Transaction): TransactionStatus => {
@@ -130,10 +148,9 @@ export const TransactionList: React.FC<TransactionListProps> = ({
 
     return transactions.filter(t => {
       const project = resolveProject(t);
-      const relevantDate = getRelevantDate(t, project);
-      if (!isWithinDateRange(relevantDate)) return false;
+      if (!isTransactionInDateRange(t, project)) return false;
 
-      // Determine which date is being displayed to allow searching by it
+      const relevantDate = getRelevantDate(t, project);
       const displayDateStr = relevantDate ? formatDate(relevantDate) : '';
 
       // Nếu không nhập gì thì không lọc theo search
@@ -186,7 +203,7 @@ export const TransactionList: React.FC<TransactionListProps> = ({
         );
       });
     });
-  }, [transactions, searchTerm, resolveProject, getRelevantDate, isWithinDateRange, getEffectiveStatus]);
+  }, [transactions, searchTerm, resolveProject, getRelevantDate, isTransactionInDateRange, getEffectiveStatus]);
 
   // Statistics Calculations based on Filtered Data
   const stats = useMemo(() => {
