@@ -455,17 +455,21 @@ export const Projects: React.FC<ProjectsProps> = ({
                 const disbursedFull = projectTrans
                   .filter(t => t.status === TransactionStatus.DISBURSED)
                   .reduce((acc, t) => {
-                    // For disbursed transactions: prefer disbursedTotal (matching Dashboard)
-                    if ((t as any).disbursedTotal) {
-                      return acc + (t as any).disbursedTotal;
-                    }
-                    // Fallback: calculate interest
                     const supplementary = t.supplementaryAmount || 0;
                     const baseDate = t.effectiveInterestDate || project.interestStartDate || (project as any).startDate;
                     const interest = t.disbursementDate
                       ? calculateInterestSmart(t.compensation.totalApproved, baseDate, new Date(t.disbursementDate))
                       : 0;
-                    return acc + t.compensation.totalApproved + interest + supplementary;
+                    const computedTotal = roundTo2(t.compensation.totalApproved + interest + supplementary);
+
+                    // For disbursed transactions: prefer disbursedTotal if it's consistent; otherwise fallback to computedTotal
+                    const storedTotal = Number((t as any).disbursedTotal);
+                    const totalToUse =
+                      isFinite(storedTotal) && storedTotal > 0 && Math.abs(roundTo2(storedTotal) - computedTotal) < 0.01
+                        ? roundTo2(storedTotal)
+                        : computedTotal;
+
+                    return acc + totalToUse;
                   }, 0);
 
                 const disbursedPartial = projectTrans
@@ -477,11 +481,6 @@ export const Projects: React.FC<ProjectsProps> = ({
                 // Tính tổng giá trị dự án thực tế (bao gồm tiền bổ sung + lãi phát sinh)
                 // Match Dashboard logic: use disbursedTotal for DISBURSED transactions
                 const actualTotalBudget = projectTrans.reduce((sum, t) => {
-                  // For disbursed transactions: prefer disbursedTotal (matching Dashboard)
-                  if (t.status === TransactionStatus.DISBURSED && (t as any).disbursedTotal) {
-                    return sum + (t as any).disbursedTotal;
-                  }
-                  
                   // Với giao dịch chưa giải ngân hoàn toàn, chỉ tính trên phần gốc còn lại (principalForInterest)
                   const supplementary = t.supplementaryAmount || 0;
                   const baseDate = t.effectiveInterestDate || project.interestStartDate || (project as any).startDate;
@@ -492,7 +491,17 @@ export const Projects: React.FC<ProjectsProps> = ({
                   } else if (t.status !== TransactionStatus.DISBURSED) {
                     interest = calculateInterestSmart(principalBase, baseDate, new Date());
                   }
-                  return sum + principalBase + interest + supplementary;
+                  const computedTotal = roundTo2(principalBase + interest + supplementary);
+
+                  // For disbursed transactions: prefer disbursedTotal if it's consistent; otherwise fallback to computedTotal
+                  if (t.status === TransactionStatus.DISBURSED) {
+                    const storedTotal = Number((t as any).disbursedTotal);
+                    if (isFinite(storedTotal) && storedTotal > 0 && Math.abs(roundTo2(storedTotal) - computedTotal) < 0.01) {
+                      return sum + roundTo2(storedTotal);
+                    }
+                  }
+
+                  return sum + computedTotal;
                 }, 0);
 
                 const percent = actualTotalBudget > 0 ? (disbursed / actualTotalBudget) * 100 : 0;

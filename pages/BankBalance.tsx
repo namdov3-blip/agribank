@@ -72,28 +72,33 @@ export const BankBalance: React.FC<BankBalanceProps> = ({
       const principalBase = (t as any).principalForInterest ?? t.compensation.totalApproved;
 
       if (t.status === TransactionStatus.DISBURSED && t.disbursementDate) {
-        // Lãi đã chốt - prefer disbursedTotal for accuracy (matching Dashboard logic)
-        if ((t as any).disbursedTotal) {
-          // Extract interest from stored total: total - principal - supplementary
-          const supplementary = t.supplementaryAmount || 0;
-          const extractedInterest = (t as any).disbursedTotal - t.compensation.totalApproved - supplementary;
+        // Lãi đã chốt:
+        // - Nếu disbursedTotal khớp (không bị làm tròn mất phần lẻ): tách lãi từ disbursedTotal để đúng theo số đã chốt
+        // - Nếu disbursedTotal có sai lệch (thường do dữ liệu cũ làm tròn): fallback sang lãi tính lại theo ngày GN
+        const supplementary = t.supplementaryAmount || 0;
+        const storedTotal = Number((t as any).disbursedTotal);
+
+        // Calculate interest with rate change support (used both as primary fallback and for consistency check)
+        let calculatedInterest = 0;
+        if (hasRateChange) {
+          const interestResult = calculateInterestWithRateChange(
+            t.compensation.totalApproved,
+            baseDate,
+            new Date(t.disbursementDate),
+            interestRateChangeDate,
+            interestRateBefore,
+            interestRateAfter
+          );
+          calculatedInterest = interestResult.totalInterest;
+        } else {
+          calculatedInterest = calculateInterest(t.compensation.totalApproved, interestRate, baseDate, new Date(t.disbursementDate));
+        }
+
+        const computedTotal = roundTo2(t.compensation.totalApproved + calculatedInterest + supplementary);
+        if (isFinite(storedTotal) && storedTotal > 0 && Math.abs(roundTo2(storedTotal) - computedTotal) < 0.01) {
+          const extractedInterest = roundTo2(storedTotal) - t.compensation.totalApproved - supplementary;
           lockedInterest += extractedInterest;
         } else {
-          // Calculate interest with rate change support
-          let calculatedInterest = 0;
-          if (hasRateChange) {
-            const interestResult = calculateInterestWithRateChange(
-              t.compensation.totalApproved,
-              baseDate,
-              new Date(t.disbursementDate),
-              interestRateChangeDate,
-              interestRateBefore,
-              interestRateAfter
-            );
-            calculatedInterest = interestResult.totalInterest;
-          } else {
-            calculatedInterest = calculateInterest(t.compensation.totalApproved, interestRate, baseDate, new Date(t.disbursementDate));
-          }
           lockedInterest += calculatedInterest;
         }
       } else if (t.status !== TransactionStatus.DISBURSED) {

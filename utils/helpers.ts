@@ -769,12 +769,18 @@ export const exportTransactionsToExcel = (
     // Ensure all values are properly converted to avoid [object Object]
     const projectCode = project ? (typeof project.code === 'string' ? project.code : String(project.code || '')) : (typeof t.projectId === 'string' ? t.projectId : String(t.projectId || ''));
     
-    // Tổng chi trả: giá trị hiện tại (gốc + lãi + bổ sung), khớp với stats box
-    // Với giao dịch đã GN có disbursedTotal thì dùng disbursedTotal (đã chốt)
-    // Với giao dịch chưa GN: luôn dùng totalAvailable để SUM khớp stats "Tiền chưa GN"
-    const displayTotalPaid = (isDisbursed && (t as any).disbursedTotal) 
-        ? (t as any).disbursedTotal 
-        : totalAvailable;
+    // Tổng chi trả:
+    // - Chưa GN: luôn dùng totalAvailable để SUM khớp stats "Tiền chưa GN"
+    // - Đã GN: ưu tiên disbursedTotal (đã chốt), nhưng nếu dữ liệu cũ bị làm tròn mất phần lẻ
+    //   thì fallback sang tổng tính lại (gốc + lãi + bổ sung) theo đúng ngày chốt.
+    const storedDisbursedTotal = Number((t as any).disbursedTotal);
+    const computedTotalPaid = roundTo2(totalAvailable);
+    const displayTotalPaid =
+      isDisbursed && isFinite(storedDisbursedTotal) && storedDisbursedTotal > 0
+        ? (Math.abs(roundTo2(storedDisbursedTotal) - computedTotalPaid) >= 0.01
+            ? computedTotalPaid
+            : roundTo2(storedDisbursedTotal))
+        : computedTotalPaid;
     const withdrawnAmountVal = (t as any).withdrawnAmount || 0;
     
     // Tiền còn lại: chỉ hiển thị nếu đã rút một phần - Y XÌ BẢNG

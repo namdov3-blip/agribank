@@ -702,13 +702,18 @@ export const TransactionList: React.FC<TransactionListProps> = ({
                 const supplementary = t.supplementaryAmount || 0;
                 const totalAvailable = principalBase + currentInterest + supplementary;
                 
-                // Tổng chi trả: luôn hiển thị giá trị hiện tại (gốc + lãi + bổ sung)
-                // Với giao dịch đã GN có disbursedTotal thì dùng disbursedTotal (đã chốt tại thời điểm GN)
-                // Với giao dịch chưa GN (kể cả đã rút một phần): hiển thị totalAvailable = principalBase + lãi + bổ sung
-                // → đảm bảo SUM(Tổng chi trả) cho chưa GN = stats "Tiền chưa GN"
-                const displayTotalPaid = (isDisbursed && (t as any).disbursedTotal) 
-                    ? (t as any).disbursedTotal 
-                    : totalAvailable;
+                // Tổng chi trả:
+                // - Chưa GN: luôn dùng totalAvailable để SUM khớp stats "Tiền chưa GN"
+                // - Đã GN: ưu tiên disbursedTotal (đã chốt), nhưng nếu dữ liệu cũ bị làm tròn mất phần lẻ
+                //   thì fallback sang totalAvailable (gốc + lãi + bổ sung) tính lại theo đúng ngày chốt.
+                const storedDisbursedTotal = Number((t as any).disbursedTotal);
+                const computedTotalPaid = roundTo2(totalAvailable);
+                const displayTotalPaid =
+                  isDisbursed && isFinite(storedDisbursedTotal) && storedDisbursedTotal > 0
+                    ? (Math.abs(roundTo2(storedDisbursedTotal) - computedTotalPaid) >= 0.01
+                        ? computedTotalPaid
+                        : roundTo2(storedDisbursedTotal))
+                    : computedTotalPaid;
                 const withdrawnAmount = (t as any).withdrawnAmount || 0;
                 
                 // Tiền còn lại: chỉ hiển thị nếu đã rút một phần
