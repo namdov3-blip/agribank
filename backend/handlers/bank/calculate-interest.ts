@@ -2,7 +2,7 @@ import { VercelRequest, VercelResponse } from '@vercel/node';
 import connectDB from '../../../lib/mongodb';
 import { Transaction, Project, BankTransaction, Settings, User } from '../../../lib/models';
 import { authMiddleware } from '../../../lib/auth';
-import { calculateInterest } from '../../../lib/utils/interest';
+import { calculateInterest, calculateInterestWithRateChange } from '../../../lib/utils/interest';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
     res.setHeader('Access-Control-Allow-Origin', '*');
@@ -36,6 +36,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         // Get settings
         const settings = await Settings.findOne({ key: 'global' }) || { interestRate: 6.5 };
         const interestRate = settings.interestRate;
+        const hasRateChange = settings.interestRateChangeDate &&
+                              settings.interestRateBefore !== null && settings.interestRateBefore !== undefined &&
+                              settings.interestRateAfter !== null && settings.interestRateAfter !== undefined;
 
         // GET - Calculate and return interest summary
         if (req.method === 'GET') {
@@ -48,32 +51,49 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
             const now = new Date();
 
-            let pendingPrincipal = 0; // Tổng gốc chưa giải ngân
-            let pendingInterest = 0;  // Lãi tạm tính (chưa giải ngân)
-            let lockedInterest = 0;   // Lãi đã chốt (đã giải ngân)
-            let supplementary = 0;    // Tiền bổ sung
+            let pendingPrincipal = 0;
+            let pendingInterest = 0;
+            let lockedInterest = 0;
+            let supplementary = 0;
 
             transactions.forEach(t => {
                 const project = projects.find(p => p._id.toString() === t.projectId.toString());
                 const baseDate = t.effectiveInterestDate || project?.interestStartDate;
+                const principalBase = (t as any).principalForInterest ?? t.compensation.totalApproved;
 
                 if (t.status === 'Đã giải ngân' && t.disbursementDate) {
-                    // Lãi đã chốt - tính đến ngày giải ngân
-                    lockedInterest += calculateInterest(
-                        t.compensation.totalApproved,
-                        interestRate,
-                        baseDate,
-                        new Date(t.disbursementDate)
-                    );
+                    let interest = 0;
+                    if (hasRateChange) {
+                        const result = calculateInterestWithRateChange(
+                            t.compensation.totalApproved,
+                            baseDate,
+                            new Date(t.disbursementDate),
+                            settings.interestRateChangeDate,
+                            settings.interestRateBefore,
+                            settings.interestRateAfter
+                        );
+                        interest = result.totalInterest;
+                    } else {
+                        interest = calculateInterest(t.compensation.totalApproved, interestRate, baseDate, new Date(t.disbursementDate));
+                    }
+                    lockedInterest += interest;
                 } else {
-                    // Chưa giải ngân - gốc + lãi tạm tính
-                    pendingPrincipal += t.compensation.totalApproved;
-                    pendingInterest += calculateInterest(
-                        t.compensation.totalApproved,
-                        interestRate,
-                        baseDate,
-                        now
-                    );
+                    pendingPrincipal += principalBase;
+                    let interest = 0;
+                    if (hasRateChange) {
+                        const result = calculateInterestWithRateChange(
+                            principalBase,
+                            baseDate,
+                            now,
+                            settings.interestRateChangeDate,
+                            settings.interestRateBefore,
+                            settings.interestRateAfter
+                        );
+                        interest = result.totalInterest;
+                    } else {
+                        interest = calculateInterest(principalBase, interestRate, baseDate, now);
+                    }
+                    pendingInterest += interest;
                     supplementary += t.supplementaryAmount || 0;
                 }
             });
@@ -133,15 +153,24 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 orgTransactions.forEach(t => {
                     const project = orgProjects.find(p => p._id.toString() === t.projectId.toString());
                     const baseDate = t.effectiveInterestDate || project?.interestStartDate;
+                    const principalBase = (t as any).principalForInterest ?? t.compensation.totalApproved;
 
-                    // Calculate interest for this month only
                     const effectiveStart = baseDate && new Date(baseDate) > monthStart ? new Date(baseDate) : monthStart;
-                    monthlyInterest += calculateInterest(
-                        t.compensation.totalApproved,
-                        interestRate,
-                        effectiveStart,
-                        monthEnd
-                    );
+                    let interest = 0;
+                    if (hasRateChange) {
+                        const result = calculateInterestWithRateChange(
+                            principalBase,
+                            effectiveStart,
+                            monthEnd,
+                            settings.interestRateChangeDate,
+                            settings.interestRateBefore,
+                            settings.interestRateAfter
+                        );
+                        interest = result.totalInterest;
+                    } else {
+                        interest = calculateInterest(principalBase, interestRate, effectiveStart, monthEnd);
+                    }
+                    monthlyInterest += interest;
                 });
 
                 if (monthlyInterest > 0) {

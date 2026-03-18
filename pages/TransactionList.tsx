@@ -149,14 +149,19 @@ export const TransactionList: React.FC<TransactionListProps> = ({
       return rawTerms.every(termRaw => {
         const term = termRaw.toLowerCase();
         
-        // Tính toán số tiền để search
+        // Tính toán số tiền để search — khớp logic Point-in-Time + Rate Change với bảng/stats
         const principalBase = (t as any).principalForInterest ?? t.compensation.totalApproved;
         const baseDate = t.effectiveInterestDate || project?.interestStartDate;
+        const searchEffectiveStatus = getEffectiveStatus(t);
+        const searchCalcDate = getEffectiveCalculationDate(t);
+
         let interest = 0;
-        if (t.status === TransactionStatus.DISBURSED && t.disbursementDate) {
-          interest = calculateInterest(principalBase, interestRate, baseDate, new Date(t.disbursementDate));
-        } else if (t.status !== TransactionStatus.DISBURSED) {
-          interest = calculateInterest(principalBase, interestRate, baseDate, new Date());
+        const hasRateChange = interestRateChangeDate && interestRateBefore !== null && interestRateAfter !== null;
+        if (hasRateChange) {
+          const result = calculateInterestWithRateChange(principalBase, baseDate, searchCalcDate, interestRateChangeDate, interestRateBefore, interestRateAfter);
+          interest = result.totalInterest;
+        } else {
+          interest = calculateInterest(principalBase, interestRate, baseDate, searchCalcDate);
         }
         const supplementary = t.supplementaryAmount || 0;
         const totalAmount = principalBase + interest + supplementary;
@@ -192,7 +197,7 @@ export const TransactionList: React.FC<TransactionListProps> = ({
         );
       });
     });
-  }, [transactions, searchTerm, resolveProject, getRelevantDate, isTransactionInDateRange, getEffectiveStatus]);
+  }, [transactions, searchTerm, resolveProject, getRelevantDate, isTransactionInDateRange, getEffectiveStatus, getEffectiveCalculationDate, interestRate, interestRateChangeDate, interestRateBefore, interestRateAfter]);
 
   // Statistics Calculations based on Filtered Data
   const stats = useMemo(() => {
