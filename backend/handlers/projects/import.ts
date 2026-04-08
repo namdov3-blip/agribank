@@ -23,8 +23,9 @@ function sanitizeDecisionNumber(raw?: string): string {
     // Replace slashes with hyphen for consistency
     s = s.replace(/\//g, '-');
 
-    // Remove all alphabetic characters, keep digits and hyphens
-    s = s.replace(/[A-Za-z]+/g, '');
+    // Keep alphanumeric decision numbers (e.g. "1553b"), drop other symbols
+    // Allow letters, digits, and hyphens only.
+    s = s.replace(/[^0-9A-Za-z-]+/g, '');
 
     // Collapse multiple hyphens
     s = s.replace(/-+/g, '-');
