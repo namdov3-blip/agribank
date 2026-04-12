@@ -39,24 +39,30 @@ export const Login: React.FC<LoginProps> = ({ onLogin }) => {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-4" style={{
-      background: '#f8fafc',
-      backgroundAttachment: 'fixed'
-    }}>
+    <div
+      className="min-h-screen flex items-center justify-center p-4 relative"
+      style={{
+        backgroundColor: '#0f172a',
+        backgroundImage: 'linear-gradient(rgba(15, 23, 42, 0.45), rgba(15, 23, 42, 0.5)), url(/login-bg.png)',
+        backgroundSize: 'cover',
+        backgroundPosition: 'center',
+        backgroundAttachment: 'fixed',
+      }}
+    >
       <div className="w-full max-w-md">
         {/* Logo */}
         <div className="text-center mb-8">
           <img
             src="https://www.agribank.com.vn/wp-content/themes/agribank/images/logo.png"
             alt="Agribank Logo"
-            className="h-16 w-auto mx-auto mb-4 object-contain"
+            className="h-16 w-auto mx-auto mb-4 object-contain drop-shadow-md"
             onError={(e) => {
               const target = e.target as HTMLImageElement;
               target.style.display = 'none';
             }}
           />
-          <h1 className="text-2xl font-bold text-slate-900 mb-2">Agribank CRM</h1>
-          <p className="text-sm text-slate-600">Hệ thống quản lý dự án & giao dịch</p>
+          <h1 className="text-2xl font-bold text-white mb-2 drop-shadow-md">Agribank CRM</h1>
+          <p className="text-sm text-white/90 drop-shadow">Hệ thống quản lý dự án & giao dịch</p>
         </div>
 
         {/* Login Form */}

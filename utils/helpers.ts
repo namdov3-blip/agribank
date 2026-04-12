@@ -360,24 +360,22 @@ export const formatDateForPrint = (dateString: string): string => {
   return `Ngày ${day} tháng ${month} năm ${year}`;
 };
 
-// Convert number to Vietnamese words
+// Convert number to Vietnamese words (supports amounts ≥ 1 tỷ by splitting the tỷ part)
 export const numberToVietnameseWords = (num: number): string => {
   // Handle invalid inputs
   if (num === null || num === undefined || isNaN(num) || !isFinite(num)) {
     return 'không';
   }
-  
+
   // Round to nearest integer for word conversion
   const roundedNum = Math.round(num);
   if (roundedNum === 0) return 'không';
-  
-  const numToProcess = roundedNum;
 
   const ones = ['', 'một', 'hai', 'ba', 'bốn', 'năm', 'sáu', 'bảy', 'tám', 'chín'];
   const tens = ['', '', 'hai mươi', 'ba mươi', 'bốn mươi', 'năm mươi', 'sáu mươi', 'bảy mươi', 'tám mươi', 'chín mươi'];
   const hundreds = ['', 'một trăm', 'hai trăm', 'ba trăm', 'bốn trăm', 'năm trăm', 'sáu trăm', 'bảy trăm', 'tám trăm', 'chín trăm'];
 
-  const readGroup = (n: number, isLastGroup: boolean = false): string => {
+  const readGroup = (n: number): string => {
     if (n === 0) return '';
 
     let result = '';
@@ -393,7 +391,6 @@ export const numberToVietnameseWords = (num: number): string => {
     if (ten > 1) {
       result += tens[ten] + ' ';
       if (one > 0) {
-        // Xử lý trường hợp đặc biệt: 5 -> "lăm" khi có hàng chục, "năm" khi không có
         if (one === 5) {
           result += 'lăm';
         } else if (one === 1 && ten > 1) {
@@ -411,37 +408,52 @@ export const numberToVietnameseWords = (num: number): string => {
     return result.trim();
   };
 
-  if (numToProcess < 1000) {
-    return readGroup(numToProcess, true);
-  }
-
-  const millions = Math.floor(numToProcess / 1000000);
-  const thousands = Math.floor((numToProcess % 1000000) / 1000);
-  const remainder = numToProcess % 1000;
-
-  let result = '';
-
-  if (millions > 0) {
-    result += readGroup(millions) + ' triệu ';
-  }
-
-  if (thousands > 0) {
-    if (thousands < 10 && millions > 0) {
-      result += 'không trăm ';
+  /** Read 0 < n < 1_000_000_000 (triệu / nghìn / đơn vị only — used under one tỷ and for the tỷ coefficient). */
+  const readUnderOneBillion = (numToProcess: number): string => {
+    if (numToProcess < 1000) {
+      return readGroup(numToProcess);
     }
-    result += readGroup(thousands) + ' nghìn ';
-  } else if (millions > 0 && remainder > 0) {
-    result += 'không nghìn ';
-  }
 
-  if (remainder > 0) {
-    if (remainder < 100 && (millions > 0 || thousands > 0)) {
-      result += 'không trăm ';
+    const millions = Math.floor(numToProcess / 1000000);
+    const thousands = Math.floor((numToProcess % 1000000) / 1000);
+    const remainder = numToProcess % 1000;
+
+    let result = '';
+
+    if (millions > 0) {
+      result += readGroup(millions) + ' triệu ';
     }
-    result += readGroup(remainder, true);
+
+    if (thousands > 0) {
+      if (thousands < 10 && millions > 0) {
+        result += 'không trăm ';
+      }
+      result += readGroup(thousands) + ' nghìn ';
+    } else if (millions > 0 && remainder > 0) {
+      result += 'không nghìn ';
+    }
+
+    if (remainder > 0) {
+      if (remainder < 100 && (millions > 0 || thousands > 0)) {
+        result += 'không trăm ';
+      }
+      result += readGroup(remainder);
+    }
+
+    return result.trim();
+  };
+
+  if (roundedNum < 1_000_000_000) {
+    return readUnderOneBillion(roundedNum);
   }
 
-  return result.trim();
+  const billions = Math.floor(roundedNum / 1_000_000_000);
+  const afterBillion = roundedNum % 1_000_000_000;
+  let out = readUnderOneBillion(billions) + ' tỷ';
+  if (afterBillion > 0) {
+    out += ' ' + readUnderOneBillion(afterBillion);
+  }
+  return out.trim();
 };
 
 // Format currency amount to Vietnamese words
