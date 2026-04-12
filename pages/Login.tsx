@@ -42,27 +42,24 @@ export const Login: React.FC<LoginProps> = ({ onLogin }) => {
     <div
       className="min-h-screen flex items-center justify-center p-4 relative"
       style={{
-        backgroundColor: '#0f172a',
-        backgroundImage: 'linear-gradient(rgba(15, 23, 42, 0.45), rgba(15, 23, 42, 0.5)), url(/login-bg.png)',
+        backgroundColor: '#0c1222',
+        backgroundImage:
+          'linear-gradient(to bottom, rgba(12, 18, 34, 0.55), rgba(12, 18, 34, 0.65)), url(/login-bg.png)',
         backgroundSize: 'cover',
         backgroundPosition: 'center',
         backgroundAttachment: 'fixed',
       }}
     >
       <div className="w-full max-w-md">
-        {/* Logo */}
         <div className="text-center mb-8">
           <img
-            src="https://www.agribank.com.vn/wp-content/themes/agribank/images/logo.png"
-            alt="Agribank Logo"
-            className="h-16 w-auto mx-auto mb-4 object-contain drop-shadow-md"
-            onError={(e) => {
-              const target = e.target as HTMLImageElement;
-              target.style.display = 'none';
-            }}
+            src="/agribank-logo.png"
+            alt="Agribank"
+            className="max-h-20 md:max-h-24 w-auto max-w-[min(100%,320px)] mx-auto object-contain drop-shadow-lg rounded-lg"
           />
-          <h1 className="text-2xl font-bold text-white mb-2 drop-shadow-md">Agribank CRM</h1>
-          <p className="text-sm text-white/90 drop-shadow">Hệ thống quản lý dự án & giao dịch</p>
+          <p className="mt-4 text-sm text-white/90 drop-shadow-md tracking-wide">
+            Hệ thống quản lý dự án & giao dịch
+          </p>
         </div>
 
         {/* Login Form */}
@@ -139,16 +136,9 @@ export const Login: React.FC<LoginProps> = ({ onLogin }) => {
             </button>
           </form>
 
-          <div className="mt-6 pt-6 border-t border-slate-200">
-            <p className="text-xs text-slate-500 text-center mb-2">
-              Vui lòng liên hệ quản trị viên để được cấp tài khoản
-            </p>
-            <div className="bg-slate-50 rounded-lg p-3 border border-slate-200">
-              <p className="text-[10px] font-bold text-slate-600 uppercase mb-1">Tài khoản mặc định:</p>
-              <p className="text-[10px] text-slate-600">Tên đăng nhập: <span className="font-mono font-bold">Quản trị viên</span></p>
-              <p className="text-[10px] text-slate-600">Mật khẩu: <span className="font-mono font-bold">admin</span></p>
-            </div>
-          </div>
+          <p className="mt-6 text-xs text-slate-500 text-center">
+            Vui lòng liên hệ quản trị viên để được cấp tài khoản
+          </p>
         </div>
       </div>
     </div>
