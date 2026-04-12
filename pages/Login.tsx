@@ -55,7 +55,7 @@ export const Login: React.FC<LoginProps> = ({ onLogin }) => {
           <img
             src="/agribank-logo.png"
             alt="Agribank"
-            className="max-h-20 md:max-h-24 w-auto max-w-[min(100%,320px)] mx-auto object-contain drop-shadow-lg rounded-lg"
+            className="max-h-20 md:max-h-24 w-auto max-w-[min(100%,320px)] mx-auto object-contain drop-shadow-[0_2px_12px_rgba(0,0,0,0.55)]"
           />
           <p className="mt-4 text-sm text-white/90 drop-shadow-md tracking-wide">
             Hệ thống quản lý dự án & giao dịch
