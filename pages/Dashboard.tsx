@@ -2,7 +2,7 @@
 import React, { useMemo, useState, useEffect, useRef } from 'react';
 import { GlassCard } from '../components/GlassCard';
 import { Transaction, TransactionStatus, Project, User, BankAccount } from '../types';
-import { formatCurrency, calculateInterest, calculateInterestWithRateChange, formatDate, roundTo2 } from '../utils/helpers';
+import { formatCurrency, calculateInterest, calculateInterestWithRateChange, formatDate, roundTo2, roundHalfUp } from '../utils/helpers';
 import {
   ComposedChart,
   Line,
@@ -347,7 +347,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
         disbursedAmount: pDisbursed,
         pendingAmount: pPending,
         interestAmount: pInterest,
-        completionRate: parseFloat(completionRate.toFixed(1))
+        completionRate: roundHalfUp(completionRate, 1)
       };
     });
   }, [projects, dateFilteredTransactions, interestRate, getEffectiveStatus, getEffectiveCalculationDate]);

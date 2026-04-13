@@ -6,6 +6,26 @@ import { toZonedTime, fromZonedTime, format as formatTz } from 'date-fns-tz';
 // Timezone constant for Vietnam
 export const VN_TIMEZONE = 'Asia/Ho_Chi_Minh';
 
+/**
+ * Làm tròn kiểu Half-Up theo số chữ số thập phân.
+ * Quy tắc: phần lẻ < 0.5 thì xuống, >= 0.5 thì lên (ví dụ 1.49 -> 1, 1.50 -> 2).
+ * Hỗ trợ cả số âm (đối xứng quanh 0).
+ */
+export const roundHalfUp = (value: number, decimals: number = 0): number => {
+  if (!isFinite(value)) return 0;
+  const d = Number.isFinite(decimals) ? Math.max(0, Math.trunc(decimals)) : 0;
+  const factor = 10 ** d;
+
+  // Reduce floating-point artifacts near .5 boundaries
+  const scaled = value * factor;
+  const eps = Number.EPSILON * Math.max(1, Math.abs(scaled)) * 4;
+
+  if (scaled >= 0) {
+    return Math.floor(scaled + 0.5 + eps) / factor;
+  }
+  return Math.ceil(scaled - 0.5 - eps) / factor;
+};
+
 // Helper: Get current date/time in VN timezone
 export const getVNNow = (): Date => {
   return toZonedTime(new Date(), VN_TIMEZONE);
@@ -41,17 +61,17 @@ export const getVNEndOfDay = (date?: Date | string): Date => {
 
 // Chuẩn hóa làm tròn: giữ 2 chữ số thập phân, .49 trở xuống làm tròn xuống, .50 trở lên làm tròn lên
 export const roundTo2 = (value: number): number => {
-  if (!isFinite(value)) return 0;
-  return Math.round(value * 100) / 100;
+  return roundHalfUp(value, 2);
 };
 
 export const formatCurrency = (amount: number): string => {
-  const rounded = roundTo2(amount);
+  // VND: làm tròn 0 chữ số thập phân theo chuẩn Half-Up
+  const rounded = roundHalfUp(amount, 0);
   return new Intl.NumberFormat('vi-VN', {
     style: 'currency',
     currency: 'VND',
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0
   }).format(rounded);
 };
 
@@ -137,7 +157,7 @@ export const calculateInterest = (principal: number, ratePerYear: number, baseDa
       // Tính lãi cho kỳ này dựa trên số dư hiện tại (đã bao gồm lãi từ các kỳ trước)
       // Giữ 2 chữ số thập phân trong quá trình tính toán, tránh làm tròn nguyên từng kỳ
       const rawPeriodInterest = currentBalance * dailyRate * daysInPeriod;
-      const periodInterest = Math.round(rawPeriodInterest * 100) / 100;
+      const periodInterest = roundHalfUp(rawPeriodInterest, 2);
       totalInterest += periodInterest;
       
       // Cộng lãi vào gốc để tính kỳ tiếp theo (lãi nhập gốc)
@@ -269,7 +289,7 @@ export const calculateInterestWithRateChange = (
             if (daysBeforeChange > 0) {
                 const dailyRateBefore = (rateBefore / 100) / 365;
                 const rawInterestBefore = currentBalance * dailyRateBefore * daysBeforeChange;
-                const periodInterestBefore = Math.round(rawInterestBefore * 100) / 100;
+                const periodInterestBefore = roundHalfUp(rawInterestBefore, 2);
                 interestBefore += periodInterestBefore;
                 totalInterest += periodInterestBefore;
                 currentBalance += periodInterestBefore;
@@ -283,7 +303,7 @@ export const calculateInterestWithRateChange = (
             if (daysAfterChange > 0) {
                 const dailyRateAfter = (rateAfter / 100) / 365;
                 const rawInterestAfter = currentBalance * dailyRateAfter * daysAfterChange;
-                const periodInterestAfter = Math.round(rawInterestAfter * 100) / 100;
+                const periodInterestAfter = roundHalfUp(rawInterestAfter, 2);
                 interestAfter += periodInterestAfter;
                 totalInterest += periodInterestAfter;
                 currentBalance += periodInterestAfter;
@@ -300,7 +320,7 @@ export const calculateInterestWithRateChange = (
                 const currentRate = useRateAfter ? rateAfter : rateBefore;
                 const dailyRate = (currentRate / 100) / 365;
                 const rawPeriodInterest = currentBalance * dailyRate * daysInPeriod;
-                const periodInterest = Math.round(rawPeriodInterest * 100) / 100;
+                const periodInterest = roundHalfUp(rawPeriodInterest, 2);
                 
                 if (useRateAfter) {
                     interestAfter += periodInterest;
@@ -368,7 +388,7 @@ export const numberToVietnameseWords = (num: number): string => {
   }
 
   // Round to nearest integer for word conversion
-  const roundedNum = Math.round(num);
+  const roundedNum = roundHalfUp(num, 0);
   if (roundedNum === 0) return 'không';
 
   const ones = ['', 'một', 'hai', 'ba', 'bốn', 'năm', 'sáu', 'bảy', 'tám', 'chín'];
@@ -994,7 +1014,7 @@ export const exportProjectsToExcel = (
     Number(projectTrans.filter(t => t.status !== TransactionStatus.DISBURSED).length) || 0,
     Number(disbursed) || 0,
     Number(actualTotalBudget - disbursed) || 0,
-    String(percent.toFixed(1) + '%')
+    String(roundHalfUp(percent, 1).toFixed(1) + '%')
   ]);
   });
 

@@ -3,6 +3,21 @@ import { toZonedTime } from 'date-fns-tz';
 const VN_TIMEZONE = 'Asia/Ho_Chi_Minh';
 
 /**
+ * Làm tròn kiểu Half-Up theo số chữ số thập phân.
+ * Quy tắc: phần lẻ < 0.5 thì xuống, >= 0.5 thì lên (ví dụ 1.49 -> 1, 1.50 -> 2).
+ * Hỗ trợ cả số âm (đối xứng quanh 0).
+ */
+export const roundHalfUp = (value: number, decimals: number = 0): number => {
+  if (!isFinite(value)) return 0;
+  const d = Number.isFinite(decimals) ? Math.max(0, Math.trunc(decimals)) : 0;
+  const factor = 10 ** d;
+  const scaled = value * factor;
+  const eps = Number.EPSILON * Math.max(1, Math.abs(scaled)) * 4;
+  if (scaled >= 0) return Math.floor(scaled + 0.5 + eps) / factor;
+  return Math.ceil(scaled - 0.5 - eps) / factor;
+};
+
+/**
  * Helper: Convert date to VN timezone and get start of day
  */
 export const getVNStartOfDay = (date: Date | string): Date => {
@@ -88,7 +103,7 @@ export const calculateInterest = (
       // Tính lãi cho kỳ này dựa trên số dư hiện tại (đã bao gồm lãi từ các kỳ trước)
       // Giữ 2 chữ số thập phân trong quá trình tính toán, tránh làm tròn nguyên từng kỳ
       const rawPeriodInterest = currentBalance * dailyRate * daysInPeriod;
-      const periodInterest = Math.round(rawPeriodInterest * 100) / 100;
+      const periodInterest = roundHalfUp(rawPeriodInterest, 2);
       totalInterest += periodInterest;
       
       // Cộng lãi vào gốc để tính kỳ tiếp theo (lãi nhập gốc)
@@ -195,7 +210,7 @@ export const calculateInterestWithRateChange = (
             if (daysBeforeChange > 0) {
                 const dailyRateBefore = (rateBefore / 100) / 365;
                 const rawInterestBefore = currentBalance * dailyRateBefore * daysBeforeChange;
-                const periodInterestBefore = Math.round(rawInterestBefore * 100) / 100;
+                const periodInterestBefore = roundHalfUp(rawInterestBefore, 2);
                 interestBefore += periodInterestBefore;
                 totalInterest += periodInterestBefore;
                 currentBalance += periodInterestBefore;
@@ -209,7 +224,7 @@ export const calculateInterestWithRateChange = (
             if (daysAfterChange > 0) {
                 const dailyRateAfter = (rateAfter / 100) / 365;
                 const rawInterestAfter = currentBalance * dailyRateAfter * daysAfterChange;
-                const periodInterestAfter = Math.round(rawInterestAfter * 100) / 100;
+                const periodInterestAfter = roundHalfUp(rawInterestAfter, 2);
                 interestAfter += periodInterestAfter;
                 totalInterest += periodInterestAfter;
                 currentBalance += periodInterestAfter;
@@ -226,7 +241,7 @@ export const calculateInterestWithRateChange = (
                 const currentRate = useRateAfter ? rateAfter : rateBefore;
                 const dailyRate = (currentRate / 100) / 365;
                 const rawPeriodInterest = currentBalance * dailyRate * daysInPeriod;
-                const periodInterest = Math.round(rawPeriodInterest * 100) / 100;
+                const periodInterest = roundHalfUp(rawPeriodInterest, 2);
                 
                 if (useRateAfter) {
                     interestAfter += periodInterest;

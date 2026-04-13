@@ -1,7 +1,7 @@
 import React, { useRef, useState, useMemo } from 'react';
 import api from '../services/api';
 import { GlassCard } from '../components/GlassCard';
-import { formatDate, formatCurrency, calculateInterest, calculateInterestWithRateChange, exportProjectsToExcel, roundTo2 } from '../utils/helpers';
+import { formatDate, formatCurrency, calculateInterest, calculateInterestWithRateChange, exportProjectsToExcel, roundTo2, roundHalfUp } from '../utils/helpers';
 import { Plus, FolderKanban, Coins, Loader2, X, Check, FileSpreadsheet, Edit2, Eye, Calendar, Save, Tag, Type, Trash2, Search, ChevronLeft, ChevronRight, Download } from 'lucide-react';
 import { Project, Transaction, TransactionStatus } from '../types';
 
@@ -505,7 +505,7 @@ export const Projects: React.FC<ProjectsProps> = ({
                 }, 0);
 
                 const percent = actualTotalBudget > 0 ? (disbursed / actualTotalBudget) * 100 : 0;
-                const percentStr = percent.toFixed(1);
+                const percentStr = roundHalfUp(percent, 1).toFixed(1);
 
                 return (
                   <tr key={project.id} className="hover:bg-blue-50/30 transition-colors">

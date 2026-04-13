@@ -3,6 +3,16 @@ import connectDB from '../../../lib/mongodb';
 import { BankTransaction, Settings, User } from '../../../lib/models';
 import { ORGANIZATIONS } from '../../../lib/models/User';
 
+const roundHalfUp = (value: number, decimals: number = 0): number => {
+    if (!isFinite(value)) return 0;
+    const d = Number.isFinite(decimals) ? Math.max(0, Math.trunc(decimals)) : 0;
+    const factor = 10 ** d;
+    const scaled = value * factor;
+    const eps = Number.EPSILON * Math.max(1, Math.abs(scaled)) * 4;
+    if (scaled >= 0) return Math.floor(scaled + 0.5 + eps) / factor;
+    return Math.ceil(scaled - 0.5 - eps) / factor;
+};
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
@@ -53,7 +63,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
             // Calculate interest
             const monthlyRate = settings.bankInterestRate || 0.5;
-            const interestAmount = Math.round(balance * (monthlyRate / 100));
+            const interestAmount = roundHalfUp(balance * (monthlyRate / 100), 0);
 
             if (interestAmount > 0) {
                 // Create interest transaction

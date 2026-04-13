@@ -5,7 +5,7 @@ import { GlassCard } from '../components/GlassCard';
 import { StatusBadge } from '../components/StatusBadge';
 import { PrintPhieuChi } from '../components/PrintPhieuChi';
 import { PrintPhieuChiBatch } from '../components/PrintPhieuChiBatch';
-import { formatCurrency, formatDate, calculateInterest, calculateInterestWithRateChange, exportTransactionsToExcel, roundTo2 } from '../utils/helpers';
+import { formatCurrency, formatDate, calculateInterest, calculateInterestWithRateChange, exportTransactionsToExcel, roundTo2, roundHalfUp } from '../utils/helpers';
 import { Search, Filter, Download, Folder, Users, CheckCircle, Clock, DollarSign, PiggyBank, ChevronLeft, ChevronRight, Eye, FileText, Printer, Trash2 } from 'lucide-react';
 import api from '../services/api';
 
@@ -168,7 +168,7 @@ export const TransactionList: React.FC<TransactionListProps> = ({
         
         // Format số tiền để search (loại bỏ dấu phẩy và khoảng trắng)
         const formatAmountForSearch = (amount: number) => {
-          return Math.round(amount).toString().replace(/\s/g, '');
+          return roundHalfUp(amount, 0).toString().replace(/\s/g, '');
         };
         const totalApprovedStr = formatAmountForSearch(t.compensation.totalApproved || 0);
         const interestStr = formatAmountForSearch(interest);

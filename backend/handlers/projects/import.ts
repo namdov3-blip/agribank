@@ -541,14 +541,25 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 return sum + (t.compensation?.totalApproved || 0) + (t.supplementaryAmount || 0);
             }, 0);
             
+            const roundHalfUp = (value: number, decimals: number = 0): number => {
+                if (!isFinite(value)) return 0;
+                const d = Number.isFinite(decimals) ? Math.max(0, Math.trunc(decimals)) : 0;
+                const factor = 10 ** d;
+                const scaled = value * factor;
+                const eps = Number.EPSILON * Math.max(1, Math.abs(scaled)) * 4;
+                if (scaled >= 0) return Math.floor(scaled + 0.5 + eps) / factor;
+                return Math.ceil(scaled - 0.5 - eps) / factor;
+            };
+
             const newProgressPercent = actualTotal > 0 ? (disbursedTotal / actualTotal) * 100 : 0;
+            const newProgressPercentRounded = roundHalfUp(newProgressPercent, 1);
             
             await (AuditLog as any).create({
                 actor: payload.name,
                 role: payload.role,
                 action: isNewProject ? 'Import Excel' : 'Merge Excel',
                 target: `Dự án ${baseProjectCode}`,
-                details: `${isNewProject ? 'Import' : 'Merge'} ${transactions.length} hồ sơ ${duplicateTransactions.length > 0 ? `(${duplicateTransactions.length} bị trùng đã bỏ qua)` : ''} vào dự án ${baseProjectName}. Tổng ngân sách: ${formatCurrency(newTotalBudget)}. Tiến độ mới: ${newProgressPercent.toFixed(1)}%`
+                details: `${isNewProject ? 'Import' : 'Merge'} ${transactions.length} hồ sơ ${duplicateTransactions.length > 0 ? `(${duplicateTransactions.length} bị trùng đã bỏ qua)` : ''} vào dự án ${baseProjectName}. Tổng ngân sách: ${formatCurrency(newTotalBudget)}. Tiến độ mới: ${newProgressPercentRounded.toFixed(1)}%`
             });
             
             return res.status(201).json({
@@ -558,7 +569,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                     totalBudget: newTotalBudget,
                     skippedCount: duplicateTransactions.length,
                     duplicates: duplicateTransactions.length > 0 ? duplicateTransactions : undefined,
-                    newProgressPercent: parseFloat(newProgressPercent.toFixed(1))
+                    newProgressPercent: newProgressPercentRounded
                 }
             });
 

@@ -4,6 +4,16 @@ import { Transaction, Project, BankTransaction, Settings, User } from '../../../
 import { authMiddleware } from '../../../lib/auth';
 import { calculateInterest, calculateInterestWithRateChange } from '../../../lib/utils/interest';
 
+const roundHalfUp = (value: number, decimals: number = 0): number => {
+    if (!isFinite(value)) return 0;
+    const d = Number.isFinite(decimals) ? Math.max(0, Math.trunc(decimals)) : 0;
+    const factor = 10 ** d;
+    const scaled = value * factor;
+    const eps = Number.EPSILON * Math.max(1, Math.abs(scaled)) * 4;
+    if (scaled >= 0) return Math.floor(scaled + 0.5 + eps) / factor;
+    return Math.ceil(scaled - 0.5 - eps) / factor;
+};
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
@@ -115,12 +125,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 data: {
                     organization: userOrg,
                     interestRate,
-                    pendingPrincipal: Math.round(pendingPrincipal),
-                    pendingInterest: Math.round(pendingInterest),
-                    lockedInterest: Math.round(lockedInterest),
-                    supplementary: Math.round(supplementary),
-                    totalPending: Math.round(pendingPrincipal + pendingInterest + supplementary),
-                    bankBalance: Math.round(bankBalance),
+                    pendingPrincipal: roundHalfUp(pendingPrincipal, 0),
+                    pendingInterest: roundHalfUp(pendingInterest, 0),
+                    lockedInterest: roundHalfUp(lockedInterest, 0),
+                    supplementary: roundHalfUp(supplementary, 0),
+                    totalPending: roundHalfUp(pendingPrincipal + pendingInterest + supplementary, 0),
+                    bankBalance: roundHalfUp(bankBalance, 0),
                     calculatedAt: now.toISOString()
                 }
             });
@@ -185,19 +195,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                     // Create interest deposit transaction
                     await BankTransaction.create({
                         type: 'Nạp tiền',
-                        amount: Math.round(monthlyInterest),
+                        amount: roundHalfUp(monthlyInterest, 0),
                         date: new Date(),
                         note: `Tự động kết chuyển lãi tháng ${targetMonth + 1}/${targetYear}`,
                         createdBy: 'Hệ thống',
-                        runningBalance: currentBalance + Math.round(monthlyInterest),
+                        runningBalance: currentBalance + roundHalfUp(monthlyInterest, 0),
                         organization: org,
                         updatedAt: new Date()
                     });
 
                     results.push({
                         organization: org,
-                        monthlyInterest: Math.round(monthlyInterest),
-                        newBalance: currentBalance + Math.round(monthlyInterest)
+                        monthlyInterest: roundHalfUp(monthlyInterest, 0),
+                        newBalance: currentBalance + roundHalfUp(monthlyInterest, 0)
                     });
                 }
             }

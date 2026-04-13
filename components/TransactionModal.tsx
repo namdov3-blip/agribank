@@ -1,7 +1,7 @@
 
 import React, { useState } from 'react';
 import { Transaction, TransactionStatus, User, AuditLogItem, BankTransactionType, Project } from '../types';
-import { formatCurrency, formatDate, formatDateForPrint, formatCurrencyToWords, calculateInterest, calculateInterestWithRateChange, formatNumberWithComma, parseNumberFromComma, toVNTime, fromVNTime, VN_TIMEZONE, roundTo2 } from '../utils/helpers';
+import { formatCurrency, formatDate, formatDateForPrint, formatCurrencyToWords, calculateInterest, calculateInterestWithRateChange, formatNumberWithComma, parseNumberFromComma, toVNTime, fromVNTime, VN_TIMEZONE, roundTo2, roundHalfUp } from '../utils/helpers';
 import { format as formatTz } from 'date-fns-tz';
 import { X, Wallet, FileText, CheckCircle, Clock, History, Scale, Printer, Undo2, ArrowDownCircle, Edit2, Save, Plus, Calendar, Loader2 } from 'lucide-react';
 import { GlassCard } from './GlassCard';
@@ -1149,7 +1149,7 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
                         <button
                           onClick={() => {
                             // Set default amount to totalAmount
-                            setRefundAmountInput(formatNumberWithComma(Math.round(totalAmount)));
+                            setRefundAmountInput(formatNumberWithComma(roundHalfUp(totalAmount, 0)));
                             setShowRefundForm(true);
                           }}
                           className="w-full py-2.5 bg-amber-50 text-amber-700 rounded-xl text-xs font-bold flex items-center justify-center gap-2 hover:bg-amber-100 transition-all border border-amber-200 shadow-sm"
