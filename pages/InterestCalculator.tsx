@@ -75,9 +75,9 @@ export const InterestCalculator: React.FC<InterestCalculatorProps> = ({
   }, [startDate, endDate]);
 
   const interest = calculateInterest(principal, rate, startDate, endDate);
-  // Chuẩn hóa kết quả: giữ 2 chữ số thập phân cho cả lãi và tổng gốc+lãi
-  const interestRounded = roundTo2(interest);
-  const roundedTotal = roundTo2(principal + interest);
+  // Chuẩn hóa kết quả: hiển thị theo VND (nguyên đồng) – lãi đã được làm tròn theo từng kỳ trong calculateInterest
+  const interestRounded = interest;
+  const roundedTotal = principal + interest;
 
   return (
     <div className="space-y-6 animate-fade-in">
