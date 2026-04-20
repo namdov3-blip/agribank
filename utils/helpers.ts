@@ -171,6 +171,111 @@ export const calculateInterest = (principal: number, ratePerYear: number, baseDa
   return totalInterest;
 };
 
+export type InterestBreakdownRow = {
+  periodIndex: number;
+  startDate: Date;
+  endDate: Date;
+  days: number;
+  ratePerYear: number;
+  balanceStart: number;
+  interest: number;
+  balanceEnd: number;
+};
+
+/**
+ * Tạo bảng chi tiết lãi theo kỳ (tháng) theo đúng logic "lãi nhập gốc" như calculateInterest.
+ * - Làm tròn lãi từng kỳ theo NGUYÊN đồng rồi mới cộng dồn.
+ * - Tôn trọng timezone VN (00:00).
+ * - Nếu có mốc thay đổi lãi suất, tự chia kỳ nếu mốc nằm trong kỳ.
+ */
+export const buildInterestBreakdown = (
+  principal: number,
+  baseDateStr: any,
+  endDate: Date,
+  opts?: {
+    ratePerYear: number;
+    rateChangeDate?: string | Date | null;
+    rateBefore?: number | null;
+    rateAfter?: number | null;
+  }
+): { rows: InterestBreakdownRow[]; totalInterest: number } => {
+  if (!baseDateStr) return { rows: [], totalInterest: 0 };
+
+  let baseDate: Date;
+  if (baseDateStr instanceof Date) baseDate = new Date(baseDateStr);
+  else if (typeof baseDateStr === 'object') return { rows: [], totalInterest: 0 };
+  else baseDate = new Date(baseDateStr);
+  if (isNaN(baseDate.getTime())) return { rows: [], totalInterest: 0 };
+
+  const baseDateVN = getVNStartOfDay(baseDate);
+  const endDateVN = getVNStartOfDay(endDate);
+  if (endDateVN <= baseDateVN) return { rows: [], totalInterest: 0 };
+
+  const hasRateChange =
+    !!opts?.rateChangeDate && opts?.rateBefore !== null && opts?.rateAfter !== null && opts?.rateBefore !== undefined && opts?.rateAfter !== undefined;
+  const changeDateVN = hasRateChange ? getVNStartOfDay(opts!.rateChangeDate!) : null;
+
+  const rows: InterestBreakdownRow[] = [];
+  let currentBalance = principal;
+  let totalInterest = 0;
+  let currentDate = new Date(baseDateVN);
+  let periodIndex = 1;
+
+  const pushRow = (start: Date, end: Date, ratePerYear: number) => {
+    const days = Math.floor((end.getTime() - start.getTime()) / (1000 * 3600 * 24));
+    if (days <= 0) return;
+    const balanceStart = currentBalance;
+    const dailyRate = (ratePerYear / 100) / 365;
+    const rawInterest = balanceStart * dailyRate * days;
+    const interest = roundHalfUp(rawInterest, 0);
+    const balanceEnd = balanceStart + interest;
+    rows.push({
+      periodIndex,
+      startDate: new Date(start),
+      endDate: new Date(end),
+      days,
+      ratePerYear,
+      balanceStart,
+      interest,
+      balanceEnd
+    });
+    totalInterest += interest;
+    currentBalance = balanceEnd;
+  };
+
+  while (currentDate < endDateVN) {
+    const periodEnd = new Date(currentDate);
+    periodEnd.setMonth(periodEnd.getMonth() + 1);
+    periodEnd.setDate(1);
+    const periodEndVN = getVNStartOfDay(periodEnd);
+    const actualPeriodEnd = periodEndVN > endDateVN ? endDateVN : periodEndVN;
+
+    if (hasRateChange && changeDateVN) {
+      const startsBefore = currentDate < changeDateVN;
+      const endsAfter = actualPeriodEnd > changeDateVN;
+      const changeInPeriod = startsBefore && endsAfter;
+
+      if (changeInPeriod) {
+        // Part 1: before change
+        pushRow(currentDate, changeDateVN, opts!.rateBefore!);
+        periodIndex += 1;
+        // Part 2: after change
+        pushRow(changeDateVN, actualPeriodEnd, opts!.rateAfter!);
+      } else {
+        const useAfter = currentDate >= changeDateVN;
+        pushRow(currentDate, actualPeriodEnd, useAfter ? opts!.rateAfter! : opts!.rateBefore!);
+      }
+    } else {
+      pushRow(currentDate, actualPeriodEnd, opts?.ratePerYear ?? 0);
+    }
+
+    currentDate = new Date(actualPeriodEnd);
+    periodIndex += 1;
+  }
+
+  return { rows, totalInterest };
+};
+
 /**
  * Tính lãi với mốc thay đổi lãi suất (ví dụ: 01/01/2026)
  * Tính liên tục theo từng kỳ tháng, áp dụng lãi suất phù hợp cho từng kỳ

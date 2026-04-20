@@ -35,7 +35,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab, curre
     <div className="w-64 h-screen fixed left-0 top-0 flex flex-col bg-white backdrop-blur-2xl border-r border-slate-200 z-40">
       <div className="p-8">
         <img 
-          src="https://www.agribank.com.vn/wp-content/themes/agribank/images/logo.png" 
+          src="/agribank-logo.png"
           alt="Agribank Logo" 
           className="h-12 w-auto object-contain"
           onError={(e) => {

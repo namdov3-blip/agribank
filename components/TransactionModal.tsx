@@ -1,9 +1,9 @@
 
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { Transaction, TransactionStatus, User, AuditLogItem, BankTransactionType, Project } from '../types';
-import { formatCurrency, formatDate, formatDateForPrint, formatCurrencyToWords, calculateInterest, calculateInterestWithRateChange, formatNumberWithComma, parseNumberFromComma, toVNTime, fromVNTime, VN_TIMEZONE, roundTo2, roundHalfUp } from '../utils/helpers';
+import { formatCurrency, formatDate, formatDateForPrint, formatCurrencyToWords, calculateInterest, calculateInterestWithRateChange, formatNumberWithComma, parseNumberFromComma, toVNTime, fromVNTime, VN_TIMEZONE, roundTo2, roundHalfUp, buildInterestBreakdown } from '../utils/helpers';
 import { format as formatTz } from 'date-fns-tz';
-import { X, Wallet, FileText, CheckCircle, Clock, History, Scale, Printer, Undo2, ArrowDownCircle, Edit2, Save, Plus, Calendar, Loader2 } from 'lucide-react';
+import { X, Wallet, FileText, CheckCircle, Clock, History, Scale, Printer, Undo2, ArrowDownCircle, Edit2, Save, Plus, Calendar, Loader2, ChevronDown, ChevronRight } from 'lucide-react';
 import { GlassCard } from './GlassCard';
 import { StatusBadge } from './StatusBadge';
 import { PrintPhieuChi } from './PrintPhieuChi';
@@ -51,7 +51,6 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
   const [showPaymentDatePicker, setShowPaymentDatePicker] = useState(false);
   const [paymentDateInput, setPaymentDateInput] = useState<string>('');
   const [isSavingPaymentDate, setIsSavingPaymentDate] = useState(false);
-  const [showWithdrawForm, setShowWithdrawForm] = useState(false);
   const [withdrawAmountInput, setWithdrawAmountInput] = useState('');
   const [withdrawDateInput, setWithdrawDateInput] = useState<string>('');
   const [isWithdrawing, setIsWithdrawing] = useState(false);
@@ -61,6 +60,9 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
   const [refundAmountInput, setRefundAmountInput] = useState('');
   const [refundDateInput, setRefundDateInput] = useState<string>('');
   const [isRefunding, setIsRefunding] = useState(false);
+  const [isSupplementaryOpen, setIsSupplementaryOpen] = useState(false);
+  const [isInterestBreakdownOpen, setIsInterestBreakdownOpen] = useState(false);
+  const [isWithdrawOpen, setIsWithdrawOpen] = useState(false);
 
   if (!transaction) return null;
 
@@ -206,6 +208,17 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
 
   // Display start date for interest logic (use baseDate directly without offset)
   const displayStartDate = baseDate ? new Date(baseDate) : null;
+
+  const interestBreakdown = useMemo(() => {
+    if (!baseDate) return { rows: [], totalInterest: 0 };
+    return buildInterestBreakdown(principalBase, baseDate, calcEndDate, {
+      ratePerYear: interestRate,
+      rateChangeDate: interestRateChangeDate ?? null,
+      rateBefore: interestRateBefore ?? null,
+      rateAfter: interestRateAfter ?? null
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [principalBase, baseDate, calcEndDate, interestRate, interestRateChangeDate, interestRateBefore, interestRateAfter]);
 
   const handleConfirmPaymentDate = async () => {
     if (!transaction.id || !paymentDateInput) {
@@ -455,7 +468,6 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
 
       onUpdateTransaction(res.data as Transaction);
       setLocalStatus(res.data.status as TransactionStatus);
-      setShowWithdrawForm(false);
       setWithdrawAmountInput('');
 
       // Log audit
@@ -544,6 +556,7 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
       setSupplementaryAmount(0);
       setSupplementaryAmountInput('');
       setSupplementaryNote('');
+      setIsSupplementaryOpen(false);
       
       alert(`Đã bổ sung ${formatCurrency(parsedAmount)} vào tổng phê duyệt. Tổng phê duyệt mới: ${formatCurrency(newTotalApproved)}. Lãi sẽ tính từ ngày ${formatDate(utcDate.toISOString())}.`);
     } catch (err: any) {
@@ -716,69 +729,151 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
                 </p>
               </div>
 
-              {/* Box Tiền bổ sung */}
-              <div className="p-4 rounded-xl bg-blue-50 border border-blue-300">
-                <p className="text-[10px] font-bold text-blue-700 uppercase tracking-wider mb-2 flex items-center gap-1">
-                  <Plus size={12} /> Số tiền bổ sung vào gốc
-                </p>
-                <div className="space-y-2">
-                  <div className="flex items-center gap-2 mb-1">
-                    <Calendar size={14} className="text-blue-700" />
-                    <p className="text-xs font-bold text-blue-700">Chọn ngày bổ sung:</p>
-                  </div>
-                  <input
-                    type="date"
-                    value={supplementaryDateInput}
-                    onChange={(e) => setSupplementaryDateInput(e.target.value)}
-                    className="w-full px-3 py-2 bg-white border border-blue-300 rounded-lg text-sm font-semibold text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
-                  <div>
-                    <p className="text-xs font-bold text-blue-700 mb-1">Số tiền bổ sung:</p>
-                    <input
-                      type="text"
-                      value={supplementaryAmountInput}
-                      onChange={(e) => {
-                        const value = e.target.value;
-                        setSupplementaryAmountInput(value);
-                        const parsed = parseNumberFromComma(value);
-                        setSupplementaryAmount(parsed);
-                      }}
-                      onBlur={(e) => {
-                        const parsed = parseNumberFromComma(e.target.value);
-                        setSupplementaryAmountInput(formatNumberWithComma(parsed));
-                      }}
-                      className="w-full px-3 py-2 bg-white border border-blue-300 rounded-lg text-sm font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      placeholder="Nhập số tiền bổ sung (ví dụ: 1,000,000)"
-                    />
-                    <p className="text-[10px] text-blue-600 mt-1 italic">
-                      * Số tiền này sẽ được cộng vào tổng phê duyệt và tính lãi từ ngày bổ sung
-                    </p>
-                  </div>
-                  <textarea
-                    value={supplementaryNote}
-                    onChange={(e) => setSupplementaryNote(e.target.value)}
-                    className="w-full px-3 py-2 bg-white border border-blue-300 rounded-lg text-xs font-medium text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    placeholder="Ghi chú..."
-                    rows={2}
-                  />
+              {/* Chi tiết lãi theo kỳ cộng dồn (dropdown giống style tiền bổ sung) */}
+              {baseDate && interestBreakdown.rows.length > 0 && (
+                <div className="rounded-xl bg-blue-50 border border-blue-300 overflow-hidden">
                   <button
-                    onClick={handleSaveSupplementary}
-                    disabled={isSavingSupplementary || parseNumberFromComma(supplementaryAmountInput) <= 0 || !supplementaryDateInput}
-                    className="w-full py-2 bg-blue-600 text-white rounded-lg text-xs font-bold hover:bg-blue-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                    type="button"
+                    onClick={() => setIsInterestBreakdownOpen(v => !v)}
+                    className="w-full px-4 py-3 flex items-center justify-between hover:bg-blue-100/60 transition-colors"
                   >
-                    {isSavingSupplementary ? (
-                      <>
-                        <Loader2 size={14} className="animate-spin" />
-                        Đang lưu...
-                      </>
-                    ) : (
-                      <>
-                        <Save size={14} />
-                        Lưu tiền bổ sung
-                      </>
-                    )}
+                    <div className="flex items-center gap-2">
+                      <Clock size={12} className="text-blue-700" />
+                      <span className="text-[10px] font-bold text-blue-700 uppercase tracking-wider">
+                        Chi tiết lãi theo kỳ cộng dồn
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-[10px] font-bold text-blue-700">
+                        {formatCurrency(interestBreakdown.totalInterest)}
+                      </span>
+                      {isInterestBreakdownOpen ? <ChevronDown size={16} className="text-blue-700" /> : <ChevronRight size={16} className="text-blue-700" />}
+                    </div>
                   </button>
+
+                  {isInterestBreakdownOpen && (
+                    <div className="p-4 pt-2 animate-in slide-in-from-top-2 duration-200">
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-xs">
+                          <thead>
+                            <tr className="text-[10px] uppercase tracking-wider text-blue-700/80 border-b border-blue-200">
+                              <th className="py-2 pr-3 text-left font-bold whitespace-nowrap">Kỳ</th>
+                              <th className="py-2 pr-3 text-left font-bold whitespace-nowrap">Từ ngày</th>
+                              <th className="py-2 pr-3 text-left font-bold whitespace-nowrap">Đến ngày</th>
+                              <th className="py-2 pr-3 text-right font-bold whitespace-nowrap">Số ngày</th>
+                              <th className="py-2 pr-3 text-right font-bold whitespace-nowrap">Số dư đầu kỳ</th>
+                              <th className="py-2 pr-3 text-right font-bold whitespace-nowrap">Lãi</th>
+                              <th className="py-2 pr-3 text-right font-bold whitespace-nowrap">Số dư cuối kỳ</th>
+                              <th className="py-2 text-right font-bold whitespace-nowrap">LS</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-blue-100">
+                            {interestBreakdown.rows.map(r => (
+                              <tr key={`${r.periodIndex}-${r.startDate.toISOString()}`} className="text-slate-800">
+                                <td className="py-2 pr-3 font-bold whitespace-nowrap">{r.periodIndex}</td>
+                                <td className="py-2 pr-3 whitespace-nowrap">{formatDate(r.startDate.toISOString())}</td>
+                                <td className="py-2 pr-3 whitespace-nowrap">{formatDate(r.endDate.toISOString())}</td>
+                                <td className="py-2 pr-3 text-right whitespace-nowrap">{r.days}</td>
+                                <td className="py-2 pr-3 text-right whitespace-nowrap font-semibold">{formatCurrency(r.balanceStart)}</td>
+                                <td className="py-2 pr-3 text-right whitespace-nowrap font-bold text-rose-600">+{formatCurrency(r.interest)}</td>
+                                <td className="py-2 pr-3 text-right whitespace-nowrap font-semibold">{formatCurrency(r.balanceEnd)}</td>
+                                <td className="py-2 text-right whitespace-nowrap text-blue-700 font-bold">{r.ratePerYear}%</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                      <div className="mt-3 text-[10px] text-blue-600 font-medium italic">
+                        * Lãi được làm tròn nguyên đồng theo từng kỳ và nhập gốc để tính kỳ tiếp theo.
+                      </div>
+                    </div>
+                  )}
                 </div>
+              )}
+
+              {/* Box Tiền bổ sung */}
+              <div className="rounded-xl bg-blue-50 border border-blue-300 overflow-hidden">
+                <button
+                  type="button"
+                  onClick={() => setIsSupplementaryOpen(v => !v)}
+                  className="w-full px-4 py-3 flex items-center justify-between hover:bg-blue-100/60 transition-colors"
+                >
+                  <div className="flex items-center gap-2">
+                    <Plus size={12} className="text-blue-700" />
+                    <span className="text-[10px] font-bold text-blue-700 uppercase tracking-wider">
+                      Số tiền bổ sung vào gốc
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {parseNumberFromComma(supplementaryAmountInput) > 0 && (
+                      <span className="text-[10px] font-bold text-blue-700">
+                        {formatCurrency(parseNumberFromComma(supplementaryAmountInput))}
+                      </span>
+                    )}
+                    {isSupplementaryOpen ? <ChevronDown size={16} className="text-blue-700" /> : <ChevronRight size={16} className="text-blue-700" />}
+                  </div>
+                </button>
+
+                {isSupplementaryOpen && (
+                  <div className="p-4 pt-2 space-y-2 animate-in slide-in-from-top-2 duration-200">
+                    <div className="flex items-center gap-2 mb-1">
+                      <Calendar size={14} className="text-blue-700" />
+                      <p className="text-xs font-bold text-blue-700">Chọn ngày bổ sung:</p>
+                    </div>
+                    <input
+                      type="date"
+                      value={supplementaryDateInput}
+                      onChange={(e) => setSupplementaryDateInput(e.target.value)}
+                      className="w-full px-3 py-2 bg-white border border-blue-300 rounded-lg text-sm font-semibold text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                    <div>
+                      <p className="text-xs font-bold text-blue-700 mb-1">Số tiền bổ sung:</p>
+                      <input
+                        type="text"
+                        value={supplementaryAmountInput}
+                        onChange={(e) => {
+                          const value = e.target.value;
+                          setSupplementaryAmountInput(value);
+                          const parsed = parseNumberFromComma(value);
+                          setSupplementaryAmount(parsed);
+                        }}
+                        onBlur={(e) => {
+                          const parsed = parseNumberFromComma(e.target.value);
+                          setSupplementaryAmountInput(formatNumberWithComma(parsed));
+                        }}
+                        className="w-full px-3 py-2 bg-white border border-blue-300 rounded-lg text-sm font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        placeholder="Nhập số tiền bổ sung (ví dụ: 1,000,000)"
+                      />
+                      <p className="text-[10px] text-blue-600 mt-1 italic">
+                        * Số tiền này sẽ được cộng vào tổng phê duyệt và tính lãi từ ngày bổ sung
+                      </p>
+                    </div>
+                    <textarea
+                      value={supplementaryNote}
+                      onChange={(e) => setSupplementaryNote(e.target.value)}
+                      className="w-full px-3 py-2 bg-white border border-blue-300 rounded-lg text-xs font-medium text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      placeholder="Ghi chú..."
+                      rows={2}
+                    />
+                    <button
+                      onClick={handleSaveSupplementary}
+                      disabled={isSavingSupplementary || parseNumberFromComma(supplementaryAmountInput) <= 0 || !supplementaryDateInput}
+                      className="w-full py-2 bg-blue-600 text-white rounded-lg text-xs font-bold hover:bg-blue-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                    >
+                      {isSavingSupplementary ? (
+                        <>
+                          <Loader2 size={14} className="animate-spin" />
+                          Đang lưu...
+                        </>
+                      ) : (
+                        <>
+                          <Save size={14} />
+                          Lưu tiền bổ sung
+                        </>
+                      )}
+                    </button>
+                  </div>
+                )}
               </div>
 
               {/* Box Tiền còn lại sau khi rút (chỉ hiện khi đã rút một phần) */}
@@ -795,19 +890,32 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
                 </div>
               )}
 
-              {/* Form Rút tiền (chỉ hiện khi chưa giải ngân hoàn toàn) */}
+              {/* Rút tiền (dropdown giống style tiền bổ sung) */}
               {!isDisbursed && (
-                <div className="p-4 rounded-xl bg-blue-50 border-2 border-blue-300">
-                  {!showWithdrawForm ? (
-                    <button
-                      onClick={() => setShowWithdrawForm(true)}
-                      className="w-full py-3 bg-blue-600 text-white rounded-lg text-sm font-bold hover:bg-blue-700 transition-all flex items-center justify-center gap-2"
-                    >
-                      <ArrowDownCircle size={18} />
-                      Rút tiền
-                    </button>
-                  ) : (
-                    <div className="space-y-3">
+                <div className="rounded-xl bg-blue-50 border border-blue-300 overflow-hidden">
+                  <button
+                    type="button"
+                    onClick={() => setIsWithdrawOpen(v => !v)}
+                    className="w-full px-4 py-3 flex items-center justify-between hover:bg-blue-100/60 transition-colors"
+                  >
+                    <div className="flex items-center gap-2">
+                      <ArrowDownCircle size={12} className="text-blue-700" />
+                      <span className="text-[10px] font-bold text-blue-700 uppercase tracking-wider">
+                        Rút tiền
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {withdrawAmountInput && parseNumberFromComma(withdrawAmountInput) > 0 && (
+                        <span className="text-[10px] font-bold text-blue-700">
+                          {formatCurrency(parseNumberFromComma(withdrawAmountInput))}
+                        </span>
+                      )}
+                      {isWithdrawOpen ? <ChevronDown size={16} className="text-blue-700" /> : <ChevronRight size={16} className="text-blue-700" />}
+                    </div>
+                  </button>
+
+                  {isWithdrawOpen && (
+                    <div className="p-4 pt-2 space-y-3 animate-in slide-in-from-top-2 duration-200">
                       <div className="flex items-center gap-2 mb-2">
                         <Calendar size={14} className="text-blue-700" />
                         <p className="text-xs font-bold text-blue-700">Chọn ngày rút:</p>
@@ -840,7 +948,10 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
                       </div>
                       <div className="flex gap-2">
                         <button
-                          onClick={handleWithdraw}
+                          onClick={async () => {
+                            await handleWithdraw();
+                            setIsWithdrawOpen(false);
+                          }}
                           disabled={isWithdrawing || !withdrawAmountInput}
                           className="flex-1 py-2 bg-blue-600 text-white rounded-lg text-xs font-bold hover:bg-blue-700 transition-all flex items-center justify-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed"
                         >
@@ -858,7 +969,7 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
                         </button>
                         <button
                           onClick={() => {
-                            setShowWithdrawForm(false);
+                            setIsWithdrawOpen(false);
                             setWithdrawAmountInput('');
                           }}
                           className="flex-1 py-2 bg-slate-200 text-slate-700 rounded-lg text-xs font-bold hover:bg-slate-300 transition-all"
