@@ -267,6 +267,7 @@ export const Projects: React.FC<ProjectsProps> = ({
         importMode: mode
       });
 
+      const totalInFile = previewData.transactions.length;
       if (response.data?.skippedCount > 0) {
         const duplicateList = response.data.duplicates || [];
         const duplicateMsg = duplicateList
@@ -274,14 +275,14 @@ export const Projects: React.FC<ProjectsProps> = ({
           .join('\n');
 
         alert(
-          `${mode === 'create' ? 'Tạo mới' : 'Merge'} thành công ${response.data.transactionCount} giao dịch.\n\n` +
-          `Có ${response.data.skippedCount} giao dịch bị trùng đã bỏ qua:\n${duplicateMsg}`
+          `${mode === 'create' ? 'Tạo mới' : 'Merge'} thành công ${response.data.transactionCount}/${totalInFile} giao dịch.\n\n` +
+          `⚠️ Có ${response.data.skippedCount} giao dịch bị trùng lặp đã bỏ qua:\n${duplicateMsg}`
         );
       } else {
         const progressMsg = response.data?.newProgressPercent 
           ? `\nTiến độ dự án: ${response.data.newProgressPercent}%`
           : '';
-        alert(`${mode === 'create' ? 'Tạo mới' : 'Merge'} thành công ${response.data.transactionCount} giao dịch!${progressMsg}`);
+        alert(`${mode === 'create' ? 'Tạo mới' : 'Merge'} thành công ${response.data.transactionCount}/${totalInFile} giao dịch!${progressMsg}`);
       }
 
       // API call was successful, just call onImport to trigger refresh (without calling API again)

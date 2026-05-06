@@ -92,7 +92,7 @@ const App: React.FC = () => {
         settingsRes
       ] = await Promise.all([
         api.projects.list().catch(() => ({ data: [] })),
-        api.transactions.list({ limit: 1000 }).catch(() => ({ data: [] })),
+        api.transactions.list({ limit: 10000 }).catch(() => ({ data: [] })),
         api.bank.getBalance().catch(() => ({ data: { openingBalance: 0, currentBalance: 0, reconciledBalance: 0 } })),
         api.bank.listTransactions().catch(() => ({ data: [] })),
         api.users.list().catch(() => ({ data: [] })),
@@ -319,7 +319,7 @@ const App: React.FC = () => {
     try {
       await api.transactions.updateStatus(id, newStatus, currentUser?.name || 'Unknown', disbursementDate);
       const [txRes, balanceRes, bankTxRes] = await Promise.all([
-        api.transactions.list({ limit: 1000 }),
+        api.transactions.list({ limit: 10000 }),
         api.bank.getBalance(),
         api.bank.listTransactions()
       ]);
@@ -338,7 +338,7 @@ const App: React.FC = () => {
     try {
       await api.transactions.refund(id, currentUser?.name || 'Unknown', refundedAmount);
       const [txRes, balanceRes, bankTxRes] = await Promise.all([
-        api.transactions.list({ limit: 1000 }),
+        api.transactions.list({ limit: 10000 }),
         api.bank.getBalance(),
         api.bank.listTransactions()
       ]);
@@ -355,7 +355,7 @@ const App: React.FC = () => {
   const handleUpdateTransaction = async (updatedTransaction: Transaction) => {
     try {
       await api.transactions.update(updatedTransaction.id, updatedTransaction);
-      const txRes = await api.transactions.list({ limit: 1000 });
+      const txRes = await api.transactions.list({ limit: 10000 });
       setTransactions(txRes.data);
     } catch (err: any) {
       console.error('Update transaction failed:', err);
@@ -426,7 +426,7 @@ const App: React.FC = () => {
             await api.projects.update(p.id, p);
             const [projectsRes, transactionsRes] = await Promise.all([
               api.projects.list(),
-              api.transactions.list({ limit: 1000 })
+              api.transactions.list({ limit: 10000 })
             ]);
             setProjects(projectsRes.data);
             setTransactions(transactionsRes.data);

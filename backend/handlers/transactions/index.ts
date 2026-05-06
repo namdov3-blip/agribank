@@ -70,7 +70,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }
 
         const pageNum = parseInt(page as string) || 1;
-        const limitNum = parseInt(limit as string) || 50;
+        const rawLimit = parseInt(limit as string) || 50;
+        // Cap at 10000 to prevent memory issues, but allow large bulk loads
+        const limitNum = Math.min(rawLimit, 10000);
         const skip = (pageNum - 1) * limitNum;
 
         const [transactions, total] = await Promise.all([
