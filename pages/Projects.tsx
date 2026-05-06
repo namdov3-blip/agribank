@@ -294,14 +294,37 @@ export const Projects: React.FC<ProjectsProps> = ({
       }
     } catch (error: any) {
       const errorMessage = error.message || 'Unknown error';
-      
-      // Check if error contains duplicate information
+
+      // 409: Project already exists in create mode → offer to switch to merge
+      if ((error as any).status === 409) {
+        const wantMerge = window.confirm(
+          `${errorMessage}\n\nBạn có muốn chuyển sang chế độ Merge (gộp giao dịch vào dự án hiện có) không?`
+        );
+        if (wantMerge) {
+          setImportMode('merge');
+          await handleConfirmImport('merge');
+        }
+        return;
+      }
+
+      // 400: All transactions are duplicates
+      if ((error as any).status === 400 && error.responseData?.duplicates) {
+        const duplicateList: any[] = error.responseData.duplicates;
+        const duplicateMsg = duplicateList
+          .map((d: any) => `- ${d.name} (Mã: ${d.maHo}, Số tiền: ${formatCurrency(d.amount)})`)
+          .join('\n');
+        alert(
+          `Lỗi: ${errorMessage}\n\nTất cả ${duplicateList.length} giao dịch đã tồn tại trong dự án:\n${duplicateMsg}\n\nKhông có giao dịch nào được thêm mới.`
+        );
+        return;
+      }
+
+      // Generic error with duplicate list
       if (error.responseData?.duplicates && Array.isArray(error.responseData.duplicates)) {
         const duplicateList = error.responseData.duplicates;
         const duplicateMsg = duplicateList
           .map((d: any) => `- ${d.name} (Mã: ${d.maHo}, Số tiền: ${formatCurrency(d.amount)})`)
           .join('\n');
-        
         alert(`Lỗi: ${errorMessage}\n\nGiao dịch trùng:\n${duplicateMsg}`);
       } else {
         alert(`Lỗi import: ${errorMessage}`);

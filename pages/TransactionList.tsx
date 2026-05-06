@@ -1,5 +1,5 @@
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { Transaction, Project, TransactionStatus, User } from '../types';
 import { GlassCard } from '../components/GlassCard';
 import { StatusBadge } from '../components/StatusBadge';
@@ -43,6 +43,17 @@ export const TransactionList: React.FC<TransactionListProps> = ({
   const [showBatchPrint, setShowBatchPrint] = useState(false);
   const [startDate, setStartDate] = useState(''); // ISO yyyy-mm-dd
   const [endDate, setEndDate] = useState(''); // ISO yyyy-mm-dd
+
+  // Sync selectedTransactions: remove stale IDs when transactions prop changes
+  useEffect(() => {
+    const validIds = new Set(transactions.map(t => t.id));
+    setSelectedTransactions(prev => {
+      if (prev.size === 0) return prev;
+      const updated = new Set([...prev].filter(id => validIds.has(id)));
+      if (updated.size === prev.size) return prev;
+      return updated;
+    });
+  }, [transactions]);
   const formattedStart = startDate ? formatDate(startDate) : '---';
   const formattedEnd = endDate ? formatDate(endDate) : '---';
 
@@ -542,8 +553,13 @@ export const TransactionList: React.FC<TransactionListProps> = ({
                           const result = await api.transactions.delete(id);
                           results.push({ success: true, ...result });
                         } catch (err: any) {
-                          console.error(`Failed to delete transaction ${id}:`, err);
-                          results.push({ success: false, id, error: err.message });
+                          if ((err as any).status === 404) {
+                            // Transaction no longer exists - treat as already deleted
+                            results.push({ success: true, id, alreadyDeleted: true });
+                          } else {
+                            console.error(`Failed to delete transaction ${id}:`, err);
+                            results.push({ success: false, id, error: err.message });
+                          }
                         }
                       }
                       const successCount = results.filter(r => r.success !== false).length;
