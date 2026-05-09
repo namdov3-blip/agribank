@@ -1,7 +1,8 @@
 import { VercelRequest, VercelResponse } from '@vercel/node';
 import connectDB from '../../../../lib/mongodb';
 import { Transaction, Project, BankTransaction, AuditLog, Settings } from '../../../../lib/models';
-import { verifyQRToken, authMiddleware } from '../../../../lib/auth';
+import { verifyQRToken } from '../../../../lib/auth';
+import { getGlobalEditingAllowed } from '../../../../lib/mutation-policy';
 import { toZonedTime } from 'date-fns-tz';
 import { calculateInterest, calculateInterestWithRateChange, getVNStartOfDay } from '../../../../lib/utils/interest';
 import { fromVNTime } from '../../../../utils/helpers';
@@ -98,6 +99,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             const supplementary = transaction.supplementaryAmount || 0;
             const totalAmount = transaction.compensation.totalApproved + interest + supplementary;
 
+            const editingAllowed = await getGlobalEditingAllowed();
+            const canConfirm =
+                transaction.status !== 'Đã giải ngân' && editingAllowed;
+
             return res.status(200).json({
                 success: true,
                 data: {
@@ -111,13 +116,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                     interest,
                     supplementary,
                     totalAmount,
-                    canConfirm: transaction.status !== 'Đã giải ngân'
+                    editingAllowed,
+                    canConfirm
                 }
             });
         }
 
         // POST - Confirm the transaction
         if (req.method === 'POST') {
+            if (!(await getGlobalEditingAllowed())) {
+                return res.status(403).json({
+                    error:
+                        'Hệ thống đang khóa chỉnh sửa (Disable). Không thể xác nhận giải ngân qua QR. Liên hệ Kế toán trưởng / Admin để bật lại.'
+                });
+            }
+
             if (transaction.status === 'Đã giải ngân') {
                 return res.status(400).json({ error: 'Giao dịch đã được giải ngân trước đó' });
             }

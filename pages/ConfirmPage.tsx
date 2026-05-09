@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { formatCurrency } from '../utils/helpers';
 import { CheckCircle, AlertCircle, Loader2, XCircle, User, FileText, DollarSign, Building2 } from 'lucide-react';
 
-import { Transaction, User as UserType } from '../types';
+import { Transaction, TransactionStatus, User as UserType } from '../types';
 import { api } from '../services/api';
 
 interface ConfirmPageProps {
@@ -22,6 +22,8 @@ interface TransactionInfo {
     supplementary: number;
     totalAmount: number;
     canConfirm: boolean;
+    /** false khi Admin/KTT đặt Disable — không cho xác nhận QR */
+    editingAllowed?: boolean;
 }
 
 // Helper function to decode JWT expiration
@@ -227,18 +229,31 @@ export const ConfirmPage: React.FC<ConfirmPageProps> = ({ transactionId, current
         );
     }
 
-    // Already disbursed
+    // Không thể xác nhận: đã GN hoặc hệ thống Disable
     if (txInfo && !txInfo.canConfirm) {
+        const isAlreadyDisbursed = txInfo.status === TransactionStatus.DISBURSED;
         return (
-            <div className="min-h-screen bg-gradient-to-br from-slate-100 to-amber-100 flex items-center justify-center p-4">
+            <div className={`min-h-screen flex items-center justify-center p-4 ${isAlreadyDisbursed ? 'bg-gradient-to-br from-slate-100 to-amber-100' : 'bg-gradient-to-br from-slate-100 to-slate-200'}`}>
                 <div className="bg-white rounded-2xl shadow-xl p-8 text-center max-w-md w-full">
-                    <AlertCircle size={64} className="text-amber-500 mx-auto mb-4" />
-                    <h1 className="text-xl font-bold text-amber-700 mb-2">Đã giải ngân trước đó</h1>
+                    <AlertCircle size={64} className={`mx-auto mb-4 ${isAlreadyDisbursed ? 'text-amber-500' : 'text-slate-500'}`} />
+                    <h1 className={`text-xl font-bold mb-2 ${isAlreadyDisbursed ? 'text-amber-700' : 'text-slate-800'}`}>
+                        {isAlreadyDisbursed ? 'Đã giải ngân trước đó' : 'Tạm thời không thể xác nhận qua QR'}
+                    </h1>
                     <p className="text-slate-600 mb-4">
-                        Giao dịch cho hộ <span className="font-bold">{txInfo.household}</span> đã được giải ngân trước đó.
+                        {isAlreadyDisbursed ? (
+                            <>
+                                Giao dịch cho hộ <span className="font-bold">{txInfo.household}</span> đã được giải ngân trước đó.
+                            </>
+                        ) : (
+                            <>
+                                Hệ thống đang ở trạng thái <span className="font-bold">Disable</span> (khóa chỉnh sửa / giải ngân). Không thể hoàn tất chi trả qua mã QR cho đến khi Kế toán trưởng hoặc Admin bật lại chế độ Able.
+                            </>
+                        )}
                     </p>
-                    <div className="bg-amber-50 rounded-lg p-4 border border-amber-200">
-                        <p className="text-amber-800 font-medium">Dự án: {txInfo.projectName}</p>
+                    <div className={`rounded-lg p-4 border ${isAlreadyDisbursed ? 'bg-amber-50 border-amber-200' : 'bg-slate-50 border-slate-200'}`}>
+                        <p className={`font-medium ${isAlreadyDisbursed ? 'text-amber-800' : 'text-slate-700'}`}>
+                            Dự án: {txInfo.projectName}
+                        </p>
                     </div>
                 </div>
             </div>
