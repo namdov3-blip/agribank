@@ -20,6 +20,8 @@ export interface BankTransaction {
   note: string;
   createdBy: string;
   runningBalance: number;
+  /** Có khi NH giao dịch gắn dự án; rỗng = dòng tiền không theo DA (phí, điều chỉnh, …) */
+  projectId?: string | null;
 }
 
 export interface BankAccount {
@@ -92,6 +94,8 @@ export interface Transaction {
   remainingAfterWithdraw?: number; // Tiền còn lại sau khi rút (bao gồm cả lãi)
   principalForInterest?: number; // Gốc tính lãi mới sau khi rút (để tính lãi tiếp tục trên phần còn lại)
   stt?: string | number;
+  /** GD do NV import chờ elevated duyệt (merge vào DA đã duyệt) */
+  staffImportPending?: boolean;
 }
 
 export interface Project {
@@ -105,12 +109,13 @@ export interface Project {
   uploadDate?: string;
   interestStartDate?: string;
   status: 'Active' | 'Completed' | 'Planning';
+  templateApproved?: boolean;
 }
 
 export interface User {
   id: string;
   name: string;
-  role: 'SuperAdmin' | 'Admin' | 'User1' | 'User2' | 'PMB';
+  role: 'SuperAdmin' | 'Admin' | 'ChiefAccountant' | 'User1' | 'User2' | 'PMB';
   avatar: string;
   permissions: string[];
   password?: string;

@@ -44,6 +44,8 @@ export interface ITransaction extends Document {
     history: ITransactionLog[];
     updatedAt: Date;
     stt?: string | number;
+    /** User thường import/merge — chờ KTT/Admin duyệt (khi dự án đã templateApproved vẫn hiện các GD cũ) */
+    staffImportPending?: boolean;
 }
 
 const TransactionLogSchema = new Schema<ITransactionLog>({
@@ -92,7 +94,8 @@ const TransactionSchema = new Schema<ITransaction>({
     principalForInterest: { type: Number }, // Gốc tính lãi mới sau khi rút (để tính lãi tiếp tục trên phần còn lại)
     notes: { type: String },
     history: { type: [TransactionLogSchema], default: [] },
-    stt: { type: String }
+    stt: { type: String },
+    staffImportPending: { type: Boolean, default: false }
 }, { timestamps: true });
 
 // Index for faster queries

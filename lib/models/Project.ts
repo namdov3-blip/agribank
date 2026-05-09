@@ -15,6 +15,8 @@ export interface IProject extends Document {
     organization: OrganizationType;
     uploadedBy?: Types.ObjectId;
     updatedAt: Date;
+    /** Khi false, user thường không thấy project/giao dịch trong list và tính toán cho đến khi duyệt */
+    templateApproved: boolean;
 }
 
 const ProjectSchema = new Schema<IProject>({
@@ -35,7 +37,8 @@ const ProjectSchema = new Schema<IProject>({
         enum: ORGANIZATIONS,
         required: true
     },
-    uploadedBy: { type: Schema.Types.ObjectId, ref: 'User' }
+    uploadedBy: { type: Schema.Types.ObjectId, ref: 'User' },
+    templateApproved: { type: Boolean, default: true }
 }, { timestamps: true });
 
 ProjectSchema.index({ organization: 1 });

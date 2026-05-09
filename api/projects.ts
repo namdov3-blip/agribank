@@ -2,6 +2,7 @@ import { VercelRequest, VercelResponse } from '@vercel/node';
 import projectsIndex from '../backend/handlers/projects/index';
 import projectsImport from '../backend/handlers/projects/import';
 import projectsId from '../backend/handlers/projects/_id';
+import approveTemplate from '../backend/handlers/projects/approve-template';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
     const { url } = req;
@@ -9,6 +10,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     if (path === '/api/projects' || path === '/api/projects/') return await projectsIndex(req, res);
     if (path.endsWith('/import')) return await projectsImport(req, res);
+
+    if (path.endsWith('/approve-template')) {
+        const segments = path.split('/').filter(Boolean);
+        const projectId = segments[segments.length - 2];
+        if (projectId && segments[segments.length - 1] === 'approve-template') {
+            req.query = { ...req.query, projectId };
+            return await approveTemplate(req, res);
+        }
+    }
 
     // Single Project (ID)
     const parts = path.split('/');

@@ -2,6 +2,7 @@ import { VercelRequest, VercelResponse } from '@vercel/node';
 import connectDB from '../../../lib/mongodb';
 import { Transaction, Project, AuditLog, Settings, BankTransaction, User } from '../../../lib/models';
 import { authMiddleware } from '../../../lib/auth';
+import { assertStaffMayMutate } from '../../../lib/mutation-policy';
 import { calculateInterest } from '../../../lib/utils/interest';
 
 // Helper to format currency
@@ -32,10 +33,42 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         // GET - Get transaction by ID
         if (req.method === 'GET') {
             const transaction = await (Transaction as any).findById(id)
-                .populate('projectId', 'code name interestStartDate');
+                .populate('projectId', 'code name interestStartDate templateApproved');
 
             if (!transaction) {
                 return res.status(404).json({ error: 'Không tìm thấy giao dịch' });
+            }
+
+            const populatedProject = transaction.projectId as any;
+            const currentUser = await (User as any).findById(payload.userId).select('organization');
+            if (!currentUser) {
+                return res.status(401).json({ error: 'User not found' });
+            }
+            const roleKeyTx = (payload.role ?? '').trim().replace(/\s+/g, '').toLowerCase();
+            const skipOrgNarrowTx =
+                roleKeyTx === 'superadmin' ||
+                roleKeyTx === 'admin' ||
+                currentUser.organization === 'Nam World';
+            const projOrg =
+                populatedProject &&
+                typeof populatedProject === 'object' &&
+                (populatedProject as any).organization;
+            const orgOkTx =
+                skipOrgNarrowTx ||
+                (projOrg && currentUser.organization && projOrg === currentUser.organization);
+            if (!orgOkTx) {
+                return res.status(403).json({ error: 'Không có quyền xem giao dịch này' });
+            }
+
+            const templateOk =
+                populatedProject &&
+                typeof populatedProject === 'object' &&
+                (populatedProject as any).templateApproved !== false;
+            const txnImportOk = (transaction as any).staffImportPending !== true;
+            if (!templateOk || !txnImportOk) {
+                return res.status(403).json({
+                    error: 'Giao dịch chờ duyệt — chỉ xem được từ tab Quản lý dự án'
+                });
             }
 
             const tObj = transaction.toObject ? transaction.toObject({ virtuals: true }) : transaction;
@@ -53,6 +86,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
         // PUT - Update transaction
         if (req.method === 'PUT') {
+            if (!(await assertStaffMayMutate(payload, res))) return;
+
             const {
                 household,
                 compensation,
@@ -138,6 +173,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
         // DELETE - Delete transaction
         if (req.method === 'DELETE') {
+            if (!(await assertStaffMayMutate(payload, res))) return;
+
             const transaction = await (Transaction as any).findById(id);
             if (!transaction) {
                 return res.status(404).json({ error: 'Không tìm thấy giao dịch' });

@@ -1,7 +1,9 @@
 import { VercelRequest, VercelResponse } from '@vercel/node';
 import connectDB from '../../../lib/mongodb';
+import mongoose from 'mongoose';
 import { Transaction, BankTransaction, Project, User } from '../../../lib/models';
 import { authMiddleware } from '../../../lib/auth';
+import { getStaffHiddenReportProjectIds } from '../../../lib/mutation-policy';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
     res.setHeader('Access-Control-Allow-Origin', '*');
@@ -41,19 +43,29 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             timestamp: new Date().toISOString()
         };
 
+        const reportHiddenIds =
+            typeList.includes('transactions') || typeList.includes('bank')
+                ? await getStaffHiddenReportProjectIds(payload, currentUser as any)
+                : [];
+
         // Get updated transactions
         if (typeList.includes('transactions')) {
-            // Get projects for this org
             const projectFilter: any = {};
             if (!isAdmin && userOrg) {
                 projectFilter.organization = userOrg;
+            }
+            if (reportHiddenIds.length > 0) {
+                projectFilter._id = {
+                    $nin: reportHiddenIds.map((i) => new mongoose.Types.ObjectId(i))
+                };
             }
             const accessibleProjects = await Project.find(projectFilter).select('_id');
             const projectIds = accessibleProjects.map(p => p._id);
 
             const updatedTransactions = await Transaction.find({
                 projectId: { $in: projectIds },
-                updatedAt: { $gt: sinceDate }
+                updatedAt: { $gt: sinceDate },
+                staffImportPending: { $ne: true }
             })
                 .populate('projectId', 'code name organization')
                 .sort({ updatedAt: -1 })
@@ -68,6 +80,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             if (!isAdmin && userOrg) {
                 bankFilter.organization = userOrg;
             }
+            const pendingObjIds = reportHiddenIds.map((i) => new mongoose.Types.ObjectId(i));
+            bankFilter.$or = [
+                { projectId: { $exists: false } },
+                { projectId: null },
+                { projectId: { $nin: pendingObjIds } }
+            ];
 
             const updatedBankTx = await BankTransaction.find(bankFilter)
                 .sort({ updatedAt: -1 })
@@ -76,7 +94,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             changes.bank = updatedBankTx;
         }
 
-        // Get updated projects
+        // Get updated projects (mọi DA trong org — để client load lại khi duyệt / cập nhật)
         if (typeList.includes('projects')) {
             const projectFilter: any = { updatedAt: { $gt: sinceDate } };
             if (!isAdmin && userOrg) {

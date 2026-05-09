@@ -1,5 +1,5 @@
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { GlassCard } from '../components/GlassCard';
 import {
   BankTransaction,
@@ -11,9 +11,18 @@ import {
   TransactionStatus,
   AuditLogItem
 } from '../types';
-import { formatCurrency, formatDate, calculateInterest, calculateInterestWithRateChange, formatNumberWithComma, parseNumberFromComma, roundTo2 } from '../utils/helpers';
 import {
-  Wallet, Plus, History, AlertCircle, PiggyBank, X
+  formatCurrency,
+  formatDate,
+  calculateInterest,
+  calculateInterestWithRateChange,
+  formatNumberWithComma,
+  parseNumberFromComma,
+  roundTo2,
+  exportBalanceProjectDetailToExcel
+} from '../utils/helpers';
+import {
+  Wallet, History, X, Table2, ChevronLeft, ChevronRight, Download
 } from 'lucide-react';
 
 interface BankBalanceProps {
@@ -29,6 +38,163 @@ interface BankBalanceProps {
   onAddBankTransaction: (type: BankTransactionType, amount: number, note: string, date: string) => void;
   onAdjustOpeningBalance: (amount: number) => void;
   setAuditLogs: React.Dispatch<React.SetStateAction<AuditLogItem[]>>;
+  readOnlyStaff?: boolean;
+}
+
+const DETAIL_PROJECTS_PAGE_SIZE = 10;
+
+function transactionProjectIdString(t: Transaction): string | null {
+  const raw = t.projectId;
+  if (raw === undefined || raw === null) return null;
+  if (typeof raw === 'object') {
+    const o = raw as { _id?: unknown; id?: unknown };
+    const id = o._id ?? o.id;
+    return id !== undefined && id !== null ? String(id) : null;
+  }
+  const s = String(raw).trim();
+  return s.length > 0 ? s : null;
+}
+
+function resolveProject(projects: Project[], pidStr: string): Project | undefined {
+  return projects.find((p) => String(p.id) === pidStr || String((p as { _id?: string })._id) === pidStr);
+}
+
+/** Dòng NH có gắn `projectId` (chuỗi không rỗng hoặc object id). Dùng khi phân biệt giao dịch gắn dự án và dòng thuần “quỹ / phí”. */
+function bankTransactionHasProject(bt: BankTransaction): boolean {
+  const raw = bt.projectId;
+  if (raw == null || raw === '') return false;
+  if (typeof raw === 'string') return raw.trim().length > 0;
+  return typeof raw === 'object';
+}
+
+/** Giải ngân hoàn toàn + rút một phần (khớp tab Quản lý dự án) — có đổi lãi suất */
+function sumDisbursedForProjectTransactions(
+  project: Project | undefined,
+  projectTrans: Transaction[],
+  interestRate: number,
+  interestRateChangeDate?: string | null,
+  interestRateBefore?: number | null,
+  interestRateAfter?: number | null
+): number {
+  const hasRateChange = !!(interestRateChangeDate && interestRateBefore !== null && interestRateAfter !== null);
+  const interestTo = (principal: number, baseDate: string | undefined, end: Date) =>
+    hasRateChange
+      ? calculateInterestWithRateChange(
+          principal,
+          baseDate,
+          end,
+          interestRateChangeDate!,
+          interestRateBefore!,
+          interestRateAfter!
+        ).totalInterest
+      : calculateInterest(principal, interestRate, baseDate, end);
+
+  const interestStartFallback = project?.interestStartDate || (project as { startDate?: string })?.startDate;
+
+  const disbursedFull = projectTrans
+    .filter((tx) => tx.status === TransactionStatus.DISBURSED)
+    .reduce((acc, t) => {
+      const supplementary = t.supplementaryAmount || 0;
+      const baseDate = t.effectiveInterestDate || interestStartFallback;
+      const interest = t.disbursementDate
+        ? interestTo(t.compensation.totalApproved, baseDate, new Date(t.disbursementDate))
+        : 0;
+      const computedTotal = roundTo2(t.compensation.totalApproved + interest + supplementary);
+      const storedTotal = Number((t as unknown as { disbursedTotal?: number }).disbursedTotal);
+      const totalToUse =
+        isFinite(storedTotal) &&
+        storedTotal > 0 &&
+        Math.abs(roundTo2(storedTotal) - computedTotal) < 0.01
+          ? roundTo2(storedTotal)
+          : computedTotal;
+      return acc + totalToUse;
+    }, 0);
+
+  const disbursedPartial = projectTrans
+    .filter((tx) => tx.status !== TransactionStatus.DISBURSED && (tx as unknown as { withdrawnAmount?: number }).withdrawnAmount)
+    .reduce((acc, t) => acc + (((t as unknown as { withdrawnAmount?: number }).withdrawnAmount) || 0), 0);
+
+  return roundTo2(disbursedFull + disbursedPartial);
+}
+
+/** Lãi tạm tính trên các hồ sơ chưa giải ngân (không tính vào phần đã GN) */
+function sumInterestUndisbursedForProject(
+  project: Project | undefined,
+  projectTrans: Transaction[],
+  interestRate: number,
+  interestRateChangeDate?: string | null,
+  interestRateBefore?: number | null,
+  interestRateAfter?: number | null
+): number {
+  const hasRateChange = !!(interestRateChangeDate && interestRateBefore !== null && interestRateAfter !== null);
+  let sum = 0;
+  for (const t of projectTrans) {
+    if (t.status === TransactionStatus.DISBURSED) continue;
+    const baseDate = t.effectiveInterestDate || project?.interestStartDate;
+    const principalBase =
+      (t as unknown as { principalForInterest?: number }).principalForInterest ?? t.compensation.totalApproved;
+    let tInterest = 0;
+    if (hasRateChange) {
+      const interestResult = calculateInterestWithRateChange(
+        principalBase,
+        baseDate,
+        new Date(),
+        interestRateChangeDate!,
+        interestRateBefore!,
+        interestRateAfter!
+      );
+      tInterest = interestResult.totalInterest;
+    } else {
+      tInterest = calculateInterest(principalBase, interestRate, baseDate, new Date());
+    }
+    sum += tInterest;
+  }
+  return roundTo2(sum);
+}
+
+/** Phần lãi trong các phiếu Đã giải ngân (tách từ disbursedTotal / tính theo ngày GN — khớp pendingData). */
+function sumLockedInterestForProject(
+  project: Project | undefined,
+  projectTrans: Transaction[],
+  interestRate: number,
+  interestRateChangeDate?: string | null,
+  interestRateBefore?: number | null,
+  interestRateAfter?: number | null
+): number {
+  const hasRateChange = !!(interestRateChangeDate && interestRateBefore !== null && interestRateAfter !== null);
+  const interestStartFallback = project?.interestStartDate || (project as { startDate?: string })?.startDate;
+  let locked = 0;
+  for (const t of projectTrans) {
+    if (t.status !== TransactionStatus.DISBURSED || !t.disbursementDate) continue;
+    const baseDate = t.effectiveInterestDate || interestStartFallback;
+    const supplementary = t.supplementaryAmount || 0;
+    const storedTotal = Number((t as unknown as { disbursedTotal?: number }).disbursedTotal);
+    let calculatedInterest = 0;
+    if (hasRateChange) {
+      calculatedInterest = calculateInterestWithRateChange(
+        t.compensation.totalApproved,
+        baseDate,
+        new Date(t.disbursementDate),
+        interestRateChangeDate!,
+        interestRateBefore!,
+        interestRateAfter!
+      ).totalInterest;
+    } else {
+      calculatedInterest = calculateInterest(
+        t.compensation.totalApproved,
+        interestRate,
+        baseDate,
+        new Date(t.disbursementDate)
+      );
+    }
+    const computedTotal = roundTo2(t.compensation.totalApproved + calculatedInterest + supplementary);
+    if (isFinite(storedTotal) && storedTotal > 0 && Math.abs(roundTo2(storedTotal) - computedTotal) < 0.01) {
+      locked += roundTo2(storedTotal) - t.compensation.totalApproved - supplementary;
+    } else {
+      locked += calculatedInterest;
+    }
+  }
+  return roundTo2(locked);
 }
 
 export const BankBalance: React.FC<BankBalanceProps> = ({
@@ -43,8 +209,11 @@ export const BankBalance: React.FC<BankBalanceProps> = ({
   onAddBankTransaction,
   currentUser,
   setAuditLogs,
+  readOnlyStaff = false
 }) => {
   const [isTxModalOpen, setIsTxModalOpen] = useState(false);
+  const [isBalanceDetailModalOpen, setIsBalanceDetailModalOpen] = useState(false);
+  const [detailModalPage, setDetailModalPage] = useState(1);
 
   const [txType, setTxType] = useState<BankTransactionType>(BankTransactionType.DEPOSIT);
   const [txAmount, setTxAmount] = useState('');
@@ -134,7 +303,116 @@ export const BankBalance: React.FC<BankBalanceProps> = ({
     };
   }, [transactions, projects, interestRate, interestRateChangeDate, interestRateBefore, interestRateAfter, bankAccount.currentBalance]);
 
+  /** Chi tiết dự án: Còn lại = Phê duyệt − Đã GN + Lãi tạm + Lãi đã chốt */
+  const balanceDetailByProject = useMemo(() => {
+    const txsByPid = new Map<string, Transaction[]>();
+    for (const t of transactions) {
+      const pid = transactionProjectIdString(t);
+      if (!pid || !resolveProject(projects, pid)) continue;
+      if (!txsByPid.has(pid)) txsByPid.set(pid, []);
+      txsByPid.get(pid)!.push(t);
+    }
+
+    const rows = [...txsByPid.entries()].map(([projectId, projectTrans]) => {
+      const project = resolveProject(projects, projectId);
+      const code = project?.code ?? projectId.slice(-8);
+      const name = project?.name ?? '—';
+      const householdCount = projectTrans.length;
+      const householdNotReceived = projectTrans.filter((t) => t.status !== TransactionStatus.DISBURSED).length;
+
+      const sumApprovedFromTx = projectTrans.reduce((s, t) => s + (t.compensation?.totalApproved ?? 0), 0);
+      const totalPheDuyet =
+        project && project.totalBudget > 0 ? roundTo2(project.totalBudget) : roundTo2(sumApprovedFromTx);
+
+      const disbursedTotal = sumDisbursedForProjectTransactions(
+        project,
+        projectTrans,
+        interestRate,
+        interestRateChangeDate,
+        interestRateBefore,
+        interestRateAfter
+      );
+      const interest = sumInterestUndisbursedForProject(
+        project,
+        projectTrans,
+        interestRate,
+        interestRateChangeDate,
+        interestRateBefore,
+        interestRateAfter
+      );
+      const interestLocked = sumLockedInterestForProject(
+        project,
+        projectTrans,
+        interestRate,
+        interestRateChangeDate,
+        interestRateBefore,
+        interestRateAfter
+      );
+      const remaining = roundTo2(totalPheDuyet - disbursedTotal + interest + interestLocked);
+
+      return {
+        projectId,
+        code,
+        name,
+        householdCount,
+        householdNotReceived,
+        totalPheDuyet,
+        disbursedTotal,
+        interest,
+        interestLocked,
+        remaining
+      };
+    });
+
+    return rows
+      .sort((a, b) =>
+        Number.isFinite(Number(a.code)) && Number.isFinite(Number(b.code))
+          ? Number(a.code) - Number(b.code)
+          : a.code.localeCompare(b.code)
+      )
+      .filter(
+        (r) =>
+          r.householdCount > 0 &&
+          (Math.abs(r.remaining) >= 0.5 ||
+            r.householdNotReceived > 0 ||
+            Math.abs(r.disbursedTotal) >= 0.5 ||
+            Math.abs(r.interest) >= 0.005 ||
+            Math.abs(r.interestLocked) >= 0.005)
+      );
+  }, [transactions, projects, interestRate, interestRateChangeDate, interestRateBefore, interestRateAfter]);
+
+  const detailTotals = useMemo(() => {
+    const households = balanceDetailByProject.reduce((acc, r) => acc + r.householdCount, 0);
+    const householdsNotReceived = balanceDetailByProject.reduce((acc, r) => acc + r.householdNotReceived, 0);
+    const totalPheDuyetSum = balanceDetailByProject.reduce((acc, r) => acc + r.totalPheDuyet, 0);
+    const disbursedSum = balanceDetailByProject.reduce((acc, r) => acc + r.disbursedTotal, 0);
+    const interestSum = balanceDetailByProject.reduce((acc, r) => acc + r.interest, 0);
+    const interestLockedSum = balanceDetailByProject.reduce((acc, r) => acc + r.interestLocked, 0);
+    const remainingSum = balanceDetailByProject.reduce((acc, r) => acc + r.remaining, 0);
+    return {
+      households,
+      householdsNotReceived,
+      totalPheDuyetSum: roundTo2(totalPheDuyetSum),
+      disbursedSum: roundTo2(disbursedSum),
+      interestSum: roundTo2(interestSum),
+      interestLockedSum: roundTo2(interestLockedSum),
+      remainingSum: roundTo2(remainingSum)
+    };
+  }, [balanceDetailByProject]);
+
+  const detailTotalPages = Math.max(1, Math.ceil(balanceDetailByProject.length / DETAIL_PROJECTS_PAGE_SIZE));
+
+  useEffect(() => {
+    if (!isBalanceDetailModalOpen) return;
+    const maxPage = Math.max(1, Math.ceil(balanceDetailByProject.length / DETAIL_PROJECTS_PAGE_SIZE));
+    setDetailModalPage((p) => Math.min(Math.max(1, p), maxPage));
+  }, [isBalanceDetailModalOpen, balanceDetailByProject.length]);
+
   const handleTxSubmit = () => {
+    if (readOnlyStaff) {
+      alert('Không thể ghi giao dịch khi hệ thống đang khóa chỉnh sửa.');
+      return;
+    }
     const amountNum = parseNumberFromComma(txAmount);
     if (isNaN(amountNum) || amountNum <= 0) return alert('Số tiền không hợp lệ');
     const finalAmount = txType === BankTransactionType.WITHDRAW ? -amountNum : amountNum;
@@ -170,13 +448,30 @@ export const BankBalance: React.FC<BankBalanceProps> = ({
     setTxAmount(formatted);
   };
 
+  const detailPageOffset = (detailModalPage - 1) * DETAIL_PROJECTS_PAGE_SIZE;
+  const balanceDetailPaged = balanceDetailByProject.slice(
+    detailPageOffset,
+    detailPageOffset + DETAIL_PROJECTS_PAGE_SIZE
+  );
+
   return (
     <div className="space-y-6 animate-fade-in pb-12">
-      <div className="flex justify-between items-end pb-2">
+      <div className="flex flex-wrap justify-between items-end gap-3 pb-2">
         <div>
           <h2 className="text-2xl font-medium text-black tracking-tight">Số dư tài khoản</h2>
           <p className="text-sm font-medium text-slate-500 mt-1">Đối soát & Theo dõi dòng tiền thực tế</p>
         </div>
+        <button
+          type="button"
+          onClick={() => {
+            setDetailModalPage(1);
+            setIsBalanceDetailModalOpen(true);
+          }}
+          className="flex items-center gap-2 px-4 py-2.5 rounded-xl border border-slate-300 bg-white text-xs font-black text-slate-800 uppercase tracking-wide shadow-sm hover:bg-slate-50 hover:border-slate-400 transition-colors"
+        >
+          <Table2 size={18} className="text-blue-600" strokeWidth={2} />
+          Chi tiết
+        </button>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -212,8 +507,10 @@ export const BankBalance: React.FC<BankBalanceProps> = ({
               <History size={16} /> Lịch sử giao dịch dòng tiền
             </h3>
             <button
+              type="button"
               onClick={() => setIsTxModalOpen(true)}
-              className="px-4 py-2 bg-blue-600 text-white rounded-lg text-xs font-bold hover:bg-blue-700 transition-all shadow-lg"
+              disabled={readOnlyStaff}
+              className="px-4 py-2 bg-blue-600 text-white rounded-lg text-xs font-bold hover:bg-blue-700 transition-all shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
             >
               Giao dịch mới
             </button>
@@ -253,6 +550,169 @@ export const BankBalance: React.FC<BankBalanceProps> = ({
           </div>
         </GlassCard>
       </div>
+
+      {isBalanceDetailModalOpen && (
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/45 backdrop-blur-sm p-2 sm:p-3 animate-in fade-in duration-200"
+          role="presentation"
+          onClick={(e) => e.target === e.currentTarget && setIsBalanceDetailModalOpen(false)}
+        >
+          <GlassCard className="w-[min(1720px,calc(100vw-1rem))] max-h-[94vh] flex flex-col bg-white shadow-2xl border-slate-200 overflow-hidden">
+            <div className="flex items-center justify-between gap-3 px-4 sm:px-5 py-3.5 border-b border-slate-200 bg-slate-50/80 shrink-0">
+              <h3 className="text-base font-black text-slate-900 tracking-tight">Chi tiết dự án</h3>
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  disabled={balanceDetailByProject.length === 0}
+                  onClick={() => {
+                    exportBalanceProjectDetailToExcel(
+                      balanceDetailByProject.map(
+                        ({
+                          code,
+                          name,
+                          householdCount,
+                          householdNotReceived,
+                          totalPheDuyet,
+                          disbursedTotal,
+                          interest,
+                          interestLocked,
+                          remaining
+                        }) => ({
+                          code,
+                          name,
+                          householdCount,
+                          householdNotReceived,
+                          totalPheDuyet,
+                          disbursedTotal,
+                          interest,
+                          interestLocked,
+                          remaining
+                        })
+                      ),
+                      detailTotals
+                    );
+                  }}
+                  className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-emerald-200 bg-emerald-50 text-emerald-800 text-xs font-bold hover:bg-emerald-100 disabled:opacity-40 disabled:cursor-not-allowed"
+                  title="Tải toàn bộ danh sách (Excel)"
+                >
+                  <Download size={18} />
+                  Excel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsBalanceDetailModalOpen(false)}
+                  className="p-2 rounded-lg border border-slate-200 hover:bg-white text-slate-600"
+                  aria-label="Đóng"
+                >
+                  <X size={20} />
+                </button>
+              </div>
+            </div>
+
+            <div className="overflow-y-auto overflow-x-hidden flex-1 min-h-0 p-3 sm:p-4">
+              <table className="w-full text-[11px] border-collapse table-fixed">
+                <colgroup>
+                  <col style={{ width: '4%' }} />
+                  <col style={{ width: '8%' }} />
+                  <col style={{ width: '20%' }} />
+                  <col style={{ width: '7%' }} />
+                  <col style={{ width: '9%' }} />
+                  <col style={{ width: '11%' }} />
+                  <col style={{ width: '11%' }} />
+                  <col style={{ width: '9%' }} />
+                  <col style={{ width: '10%' }} />
+                  <col style={{ width: '11%' }} />
+                </colgroup>
+                <thead>
+                  <tr className="bg-slate-100 text-[10px] font-black text-slate-700 uppercase border-b border-slate-300">
+                    <th className="border border-slate-300 px-1.5 py-2 text-center">STT</th>
+                    <th className="border border-slate-300 px-1.5 py-2 text-left">Mã dự án</th>
+                    <th className="border border-slate-300 px-1.5 py-2 text-left">Tên dự án</th>
+                    <th className="border border-slate-300 px-1 py-2 text-center leading-tight">Tổng hộ dân</th>
+                    <th className="border border-slate-300 px-1 py-2 text-center leading-tight">Hộ chưa nhận</th>
+                    <th className="border border-slate-300 px-1.5 py-2 text-right leading-tight">Tổng phê duyệt</th>
+                    <th className="border border-slate-300 px-1.5 py-2 text-right leading-tight">Đã giải ngân</th>
+                    <th className="border border-slate-300 px-1.5 py-2 text-right">Lãi</th>
+                    <th className="border border-slate-300 px-1.5 py-2 text-right leading-tight">Lãi đã chốt</th>
+                    <th className="border border-slate-300 px-1.5 py-2 text-right">Còn lại</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr className="bg-slate-50 font-black border-b border-slate-300">
+                    <td className="border border-slate-300 px-1.5 py-2 text-center text-slate-500">—</td>
+                    <td className="border border-slate-300 px-1.5 py-2"></td>
+                    <td className="border border-slate-300 px-1.5 py-2 text-slate-900 min-w-0">TỔNG CỘNG</td>
+                    <td className="border border-slate-300 px-1 py-2 text-center">{detailTotals.households}</td>
+                    <td className="border border-slate-300 px-1 py-2 text-center">{detailTotals.householdsNotReceived}</td>
+                    <td className="border border-slate-300 px-1.5 py-2 text-right tabular-nums">{formatCurrency(detailTotals.totalPheDuyetSum)}</td>
+                    <td className="border border-slate-300 px-1.5 py-2 text-right tabular-nums">{formatCurrency(detailTotals.disbursedSum)}</td>
+                    <td className="border border-slate-300 px-1.5 py-2 text-right tabular-nums">{formatCurrency(detailTotals.interestSum)}</td>
+                    <td className="border border-slate-300 px-1.5 py-2 text-right tabular-nums">{formatCurrency(detailTotals.interestLockedSum)}</td>
+                    <td className="border border-slate-300 px-1.5 py-2 text-right bg-amber-200 text-slate-900 tabular-nums">
+                      {formatCurrency(detailTotals.remainingSum)}
+                    </td>
+                  </tr>
+
+                  {balanceDetailPaged.map((row, idx) => {
+                    const stt = detailPageOffset + idx + 1;
+                    return (
+                      <tr key={`${row.projectId}-${detailPageOffset + idx}`} className="hover:bg-blue-50/30 border-b border-slate-200">
+                        <td className="border border-slate-300 px-1.5 py-1.5 text-center font-bold text-slate-700">{stt}</td>
+                        <td className="border border-slate-300 px-1.5 py-1.5 font-mono font-bold align-top">{row.code}</td>
+                        <td className="border border-slate-300 px-1.5 py-1.5 font-semibold text-slate-900 min-w-0 break-words align-top">{row.name}</td>
+                        <td className="border border-slate-300 px-1 py-1.5 text-center font-bold text-slate-800">{row.householdCount}</td>
+                        <td className="border border-slate-300 px-1 py-1.5 text-center font-bold text-amber-900">{row.householdNotReceived}</td>
+                        <td className="border border-slate-300 px-1.5 py-1.5 text-right font-bold text-slate-800 tabular-nums">{formatCurrency(row.totalPheDuyet)}</td>
+                        <td className="border border-slate-300 px-1.5 py-1.5 text-right font-bold tabular-nums">{formatCurrency(row.disbursedTotal)}</td>
+                        <td className="border border-slate-300 px-1.5 py-1.5 text-right font-bold tabular-nums">{formatCurrency(row.interest)}</td>
+                        <td className="border border-slate-300 px-1.5 py-1.5 text-right font-bold text-sky-900 tabular-nums">{formatCurrency(row.interestLocked)}</td>
+                        <td className="border border-slate-300 px-1.5 py-1.5 text-right font-black text-emerald-800 tabular-nums">{formatCurrency(row.remaining)}</td>
+                      </tr>
+                    );
+                  })}
+
+                  {balanceDetailByProject.length === 0 && (
+                    <tr>
+                      <td colSpan={10} className="border border-slate-300 px-4 py-8 text-center text-slate-500 font-medium">
+                        Không có khoản chưa giải ngân trên các dự án hiện tại (hoặc chưa có dữ liệu).
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+              {detailTotalPages > 1 && (
+                <div className="flex items-center justify-between gap-3 mt-4 pt-3 border-t border-slate-200">
+                  <p className="text-[11px] font-semibold text-slate-600">
+                    {balanceDetailByProject.length} dự án — hiển thị {detailPageOffset + 1}–
+                    {Math.min(detailPageOffset + DETAIL_PROJECTS_PAGE_SIZE, balanceDetailByProject.length)}
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      disabled={detailModalPage <= 1}
+                      onClick={() => setDetailModalPage((p) => Math.max(1, p - 1))}
+                      className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg border border-slate-300 text-[11px] font-bold bg-white hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                    >
+                      <ChevronLeft size={16} /> Trước
+                    </button>
+                    <span className="text-[11px] font-black text-slate-800 min-w-[4.5rem] text-center">
+                      {detailModalPage} / {detailTotalPages}
+                    </span>
+                    <button
+                      type="button"
+                      disabled={detailModalPage >= detailTotalPages}
+                      onClick={() => setDetailModalPage((p) => Math.min(detailTotalPages, p + 1))}
+                      className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg border border-slate-300 text-[11px] font-bold bg-white hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                    >
+                      Sau <ChevronRight size={16} />
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </GlassCard>
+        </div>
+      )}
 
       {isTxModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-sm p-4 animate-in fade-in zoom-in duration-200">

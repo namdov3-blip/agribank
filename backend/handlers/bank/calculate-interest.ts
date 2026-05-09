@@ -1,8 +1,10 @@
 import { VercelRequest, VercelResponse } from '@vercel/node';
 import connectDB from '../../../lib/mongodb';
 import { Transaction, Project, BankTransaction, Settings, User } from '../../../lib/models';
+import mongoose from 'mongoose';
 import { authMiddleware } from '../../../lib/auth';
 import { calculateInterest, calculateInterestWithRateChange } from '../../../lib/utils/interest';
+import { assertStaffMayMutate, getStaffHiddenReportProjectIds } from '../../../lib/mutation-policy';
 
 const roundHalfUp = (value: number, decimals: number = 0): number => {
     if (!isFinite(value)) return 0;
@@ -42,6 +44,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         if (!isAdmin && userOrg) {
             projectFilter.organization = userOrg;
         }
+        const reportHiddenIds = await getStaffHiddenReportProjectIds(payload, currentUser as any);
+        if (reportHiddenIds.length > 0) {
+            projectFilter._id = {
+                $nin: reportHiddenIds.map((i) => new mongoose.Types.ObjectId(i))
+            };
+        }
 
         // Get settings
         // NOTE: Keep settingsDoc typed as the Mongoose document (or null) to avoid union-type property errors in TS.
@@ -60,8 +68,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             const projects = await Project.find(projectFilter);
             const projectIds = projects.map(p => p._id);
 
-            // Get all transactions for these projects
-            const transactions = await Transaction.find({ projectId: { $in: projectIds } });
+            const txQuery: Record<string, unknown> = {
+                projectId: { $in: projectIds },
+                staffImportPending: { $ne: true }
+            };
+            const transactions = await Transaction.find(txQuery);
 
             const now = new Date();
 
@@ -112,13 +123,27 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 }
             });
 
-            // Get bank balance for this org
+            // Get bank balance for this org (staff: không tính dòng NH gắn dự án chờ duyệt template)
             const bankFilter: any = {};
             if (!isAdmin && userOrg) {
                 bankFilter.organization = userOrg;
             }
-            const lastBankTx = await BankTransaction.findOne(bankFilter).sort({ date: -1 });
-            const bankBalance = lastBankTx?.runningBalance || 0;
+            let bankBalance = 0;
+            const pendingObjIds = reportHiddenIds.map((i: string) => new mongoose.Types.ObjectId(i));
+            const opening = settingsDoc?.bankOpeningBalance ?? 0;
+            const mongoFilter: any = {
+                ...bankFilter,
+                $or: [
+                    { projectId: { $exists: false } },
+                    { projectId: null },
+                    { projectId: { $nin: pendingObjIds } }
+                ]
+            };
+            const txs = await BankTransaction.find(mongoFilter).sort({ date: 1, _id: 1 });
+            bankBalance = opening;
+            txs.forEach((tx: any) => {
+                bankBalance += tx.amount;
+            });
 
             return res.status(200).json({
                 success: true,
@@ -138,9 +163,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
         // POST - Capitalize monthly interest (manual trigger or cron)
         if (req.method === 'POST') {
-            if (payload.role !== 'Admin' && payload.role !== 'SuperAdmin') {
+            if (payload.role !== 'Admin' && payload.role !== 'SuperAdmin' && payload.role !== 'ChiefAccountant') {
                 return res.status(403).json({ error: 'Admin only' });
             }
+
+            if (!(await assertStaffMayMutate(payload, res))) return;
 
             const { month, year } = req.body;
             const targetMonth = month || new Date().getMonth();
@@ -151,7 +178,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             const results: any[] = [];
 
             for (const org of orgs) {
-                const orgProjects = await Project.find({ organization: org });
+                const orgProjects = await Project.find({
+                    organization: org,
+                    templateApproved: true
+                });
                 const projectIds = orgProjects.map(p => p._id);
 
                 const orgTransactions = await Transaction.find({

@@ -2,6 +2,8 @@ import { VercelRequest, VercelResponse } from '@vercel/node';
 import connectDB from '../../../lib/mongodb';
 import { BankTransaction, Settings, AuditLog, User } from '../../../lib/models';
 import { authMiddleware } from '../../../lib/auth';
+import { assertStaffMayMutate, getStaffHiddenReportProjectIds } from '../../../lib/mutation-policy';
+import mongoose from 'mongoose';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
     res.setHeader('Access-Control-Allow-Origin', '*');
@@ -24,26 +26,37 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             return res.status(401).json({ error: 'User not found' });
         }
 
-        // Build organization filter
+        // Build organization filter (JWT role có thể lệch hoa thường — giữ đúng quy tắc Admin/SuperNamWorld)
         const orgFilter: any = {};
-        const isAllOrg = payload.role === 'SuperAdmin' || currentUser.organization === 'Nam World';
-        if (payload.role !== 'Admin' && !isAllOrg && currentUser.organization) {
+        const roleKey = (payload.role ?? '').trim().replace(/\s+/g, '').toLowerCase();
+        const skipOrgNarrow =
+            roleKey === 'superadmin' || roleKey === 'admin' || currentUser.organization === 'Nam World';
+        if (!skipOrgNarrow && currentUser.organization) {
             orgFilter.organization = currentUser.organization;
         }
 
-        // GET - List bank transactions (filtered by org)
+        // GET - List bank transactions (filtered by org; bỏ dòng NH gắn dự án chờ duyệt — mọi role)
         if (req.method === 'GET') {
             const { page = '1', limit = '50' } = req.query;
             const pageNum = parseInt(page as string) || 1;
             const limitNum = parseInt(limit as string) || 50;
             const skip = (pageNum - 1) * limitNum;
 
+            const mongoFilter: any = { ...orgFilter };
+            const pendingIds = await getStaffHiddenReportProjectIds(payload, currentUser);
+            const pendingObjIds = pendingIds.map((i: string) => new mongoose.Types.ObjectId(i));
+            mongoFilter.$or = [
+                { projectId: { $exists: false } },
+                { projectId: null },
+                { projectId: { $nin: pendingObjIds } }
+            ];
+
             const [transactions, total] = await Promise.all([
-                (BankTransaction as any).find(orgFilter)
+                (BankTransaction as any).find(mongoFilter)
                     .sort({ _id: -1 })
                     .skip(skip)
                     .limit(limitNum),
-                (BankTransaction as any).countDocuments(orgFilter)
+                (BankTransaction as any).countDocuments(mongoFilter)
             ]);
 
             return res.status(200).json({
@@ -60,6 +73,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
         // POST - Create new bank transaction
         if (req.method === 'POST') {
+            if (!(await assertStaffMayMutate(payload, res))) return;
+
             const { type, amount, note, date, projectId } = req.body;
 
             if (!type || amount === undefined) {

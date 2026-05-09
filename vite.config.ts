@@ -19,7 +19,7 @@ export default defineConfig(({ mode }) => {
             let lastErrorTime = 0;
             const ERROR_SUPPRESS_INTERVAL = 10000; // Only show error once per 10 seconds
             
-            proxy.on('error', (err, req, res) => {
+            proxy.on('error', (err: NodeJS.ErrnoException, req, res) => {
               const now = Date.now();
               const isConnectionError = err.code === 'ECONNREFUSED' || 
                                       err.code === 'ECONNRESET' || 

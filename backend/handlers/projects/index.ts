@@ -2,6 +2,7 @@ import { VercelRequest, VercelResponse } from '@vercel/node';
 import connectDB from '../../../lib/mongodb';
 import { Project, AuditLog, User } from '../../../lib/models';
 import { authMiddleware } from '../../../lib/auth';
+import { assertStaffMayMutate, isElevatedRole } from '../../../lib/mutation-policy';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
     // Enable CORS
@@ -19,6 +20,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
         await connectDB();
 
+        await (Project as any).updateMany(
+            { $or: [{ templateApproved: { $exists: false } }, { templateApproved: null }] },
+            { $set: { templateApproved: true } }
+        );
+
         // Get user's organization for filtering
         const currentUser = await (User as any).findById(payload.userId);
         if (!currentUser) {
@@ -29,9 +35,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         if (req.method === 'GET') {
             const filter: any = {};
 
-            const isAllOrg = payload.role === 'SuperAdmin' || currentUser.organization === 'Nam World';
-            // SuperAdmin/Admin/Nam World sees all, others see only their org
-            if (payload.role !== 'Admin' && !isAllOrg && currentUser.organization) {
+            const roleKey = (payload.role ?? '').trim().replace(/\s+/g, '').toLowerCase();
+            const skipOrgNarrow =
+                roleKey === 'superadmin' ||
+                roleKey === 'admin' ||
+                currentUser.organization === 'Nam World';
+            if (!skipOrgNarrow && currentUser.organization) {
                 filter.organization = currentUser.organization;
             }
 
@@ -55,6 +64,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
         // POST - Create new project
         if (req.method === 'POST') {
+            if (!(await assertStaffMayMutate(payload, res))) return;
+
             const { code, name, location, totalBudget, interestStartDate, status } = req.body;
 
             if (!code || !name) {
@@ -78,7 +89,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 startDate: new Date(),
                 organization: currentUser.organization, // Auto-set from current user
                 uploadedBy: currentUser._id,
-                updatedAt: new Date()
+                updatedAt: new Date(),
+                templateApproved: isElevatedRole(payload.role)
             });
 
             // Create audit log

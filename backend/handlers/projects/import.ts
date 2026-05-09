@@ -2,6 +2,7 @@ import { VercelRequest, VercelResponse } from '@vercel/node';
 import connectDB from '../../../lib/mongodb';
 import { Project, Transaction, AuditLog, BankTransaction, User } from '../../../lib/models';
 import { authMiddleware } from '../../../lib/auth';
+import { assertStaffMayMutate, isElevatedRole } from '../../../lib/mutation-policy';
 import * as XLSX from 'xlsx';
 
 // Build fallback household ID when source data doesn't provide one
@@ -338,6 +339,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             return res.status(200).json({ success: true, data: previewResult });
         }
 
+        if (!(await assertStaffMayMutate(payload, res))) {
+            return;
+        }
+
         // --- DB OPERATIONS ---
         const createdProjects: any[] = [];
         const createdBankTxs: any[] = [];
@@ -373,7 +378,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                     status: 'Active',
                     organization: currentUser.organization,
                     uploadedBy: currentUser._id,
-                    updatedAt: new Date()
+                    updatedAt: new Date(),
+                    templateApproved: isElevatedRole(payload.role)
                 });
                 createdProjects.push(project);
                 isNewProject = true;
@@ -461,9 +467,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                     }
                 }
                 
+                const elevatedImporter = isElevatedRole(payload.role);
                 transactionsToInsert.push({
                     ...txData,
                     projectId: project._id,
+                    staffImportPending: !elevatedImporter,
                     // Set effectiveInterestDate for merged transactions to prevent interest calculation from old project date
                     effectiveInterestDate: effectiveInterestDateForMerge || txData.effectiveInterestDate,
                     updatedAt: new Date(),
@@ -497,6 +505,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             
             project.totalBudget = newTotalBudget;
             project.updatedAt = new Date();
+            if (isElevatedRole(payload.role)) {
+                project.templateApproved = true;
+            } else if (transactions.length > 0) {
+                // Chỉ dự án tạo mới bị chờ duyệt template; merge vào DA đã duyệt giữ nguyên templateApproved
+                if (isNewProject) {
+                    project.templateApproved = false;
+                }
+            }
             await project.save();
             
             // Create bank transaction only for new transactions

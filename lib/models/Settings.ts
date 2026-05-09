@@ -18,6 +18,8 @@ export interface ISettings extends Document {
     bankOpeningBalance: number;
     bankInterestRate: number;
     lastBankInterestAccrued?: Date;
+    /** false = User1/User2/PMB chỉ đọc */
+    editingAllowed: boolean;
 }
 
 const InterestHistorySchema = new Schema<IInterestHistoryLog>({
@@ -36,7 +38,8 @@ const SettingsSchema = new Schema<ISettings>({
     interestHistory: { type: [InterestHistorySchema], default: [] },
     bankOpeningBalance: { type: Number, default: 0 },
     bankInterestRate: { type: Number, default: 0.5 }, // Monthly interest rate
-    lastBankInterestAccrued: { type: Date }
+    lastBankInterestAccrued: { type: Date },
+    editingAllowed: { type: Boolean, default: true }
 });
 
 // Ensure virtual fields (like id) are serialized and _id is removed

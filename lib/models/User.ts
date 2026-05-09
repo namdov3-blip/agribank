@@ -6,7 +6,7 @@ export type OrganizationType = typeof ORGANIZATIONS[number];
 export interface IUser extends Document {
     name: string;
     password: string;
-    role: 'SuperAdmin' | 'Admin' | 'User1' | 'User2' | 'PMB';
+    role: 'SuperAdmin' | 'Admin' | 'ChiefAccountant' | 'User1' | 'User2' | 'PMB';
     avatar: string;
     permissions: string[];
     organization: OrganizationType;
@@ -18,7 +18,7 @@ const UserSchema = new Schema<IUser>({
     password: { type: String, required: true },
     role: {
         type: String,
-        enum: ['SuperAdmin', 'Admin', 'User1', 'User2', 'PMB'],
+        enum: ['SuperAdmin', 'Admin', 'ChiefAccountant', 'User1', 'User2', 'PMB'],
         default: 'User2'
     },
     avatar: { type: String, default: '' },

@@ -1,7 +1,22 @@
-
-import { Transaction, Project, TransactionStatus, AuditLogItem } from '../types';
-// Import date-fns-tz functions (v3 uses toZonedTime and fromZonedTime)
+import { Transaction, Project, TransactionStatus, AuditLogItem, User } from '../types';
 import { toZonedTime, fromZonedTime, format as formatTz } from 'date-fns-tz';
+
+/** Kế toán trưởng / Admin / SuperAdmin — không bị khóa chỉnh sửa và thấy dự án chờ duyệt */
+export function isElevatedWorkspaceRole(role: User['role'] | string | undefined): boolean {
+    if (!role || typeof role !== 'string') return false;
+    const key = role.trim().replace(/\s+/g, '').toLowerCase();
+    return key === 'superadmin' || key === 'admin' || key === 'chiefaccountant';
+}
+
+/** Role nâng cao hoặc có quyền tab Admin — không chịu khóa “Don’t Allow” trên UI/API ghi (đồng bộ mutation-policy) */
+export function isStaffEditingPolicyExempt(
+    role: User['role'] | string | undefined,
+    permissions?: string[] | null
+): boolean {
+    if (isElevatedWorkspaceRole(role)) return true;
+    if (!permissions?.length) return false;
+    return permissions.some((p) => String(p).trim().toLowerCase() === 'admin');
+}
 
 // Timezone constant for Vietnam
 export const VN_TIMEZONE = 'Asia/Ho_Chi_Minh';
@@ -636,6 +651,74 @@ const downloadExcel = async (data: any[][], fileName: string) => {
   
   // Write file
   XLSX.writeFile(wb, fileName);
+};
+
+/** Xuất Excel chi tiết theo dự án — Số dư (đồng bộ cột trong modal Chi tiết dự án). */
+export type BalanceDetailExportRow = {
+  code: string;
+  name: string;
+  householdCount: number;
+  householdNotReceived: number;
+  totalPheDuyet: number;
+  disbursedTotal: number;
+  interest: number;
+  interestLocked: number;
+  remaining: number;
+};
+
+export type BalanceDetailExportTotals = {
+  households: number;
+  householdsNotReceived: number;
+  totalPheDuyetSum: number;
+  disbursedSum: number;
+  interestSum: number;
+  interestLockedSum: number;
+  remainingSum: number;
+};
+
+export const exportBalanceProjectDetailToExcel = (
+  rows: BalanceDetailExportRow[],
+  totals: BalanceDetailExportTotals
+): void => {
+  const vnNow = formatTz(toZonedTime(new Date(), VN_TIMEZONE), 'yyyy-MM-dd-HHmm', { timeZone: VN_TIMEZONE });
+  const fileName = `Chi_tiet_du_an_so_du_${vnNow}.xlsx`;
+  const headers = [
+    'STT',
+    'Mã dự án',
+    'Tên dự án',
+    'Tổng hộ dân',
+    'Hộ dân chưa nhận',
+    'Tổng phê duyệt',
+    'Đã giải ngân',
+    'Lãi',
+    'Lãi đã chốt',
+    'Còn lại'
+  ];
+  const totalRow: (string | number)[] = [
+    '—',
+    '',
+    'TỔNG CỘNG',
+    totals.households,
+    totals.householdsNotReceived,
+    totals.totalPheDuyetSum,
+    totals.disbursedSum,
+    totals.interestSum,
+    totals.interestLockedSum,
+    totals.remainingSum
+  ];
+  const bodyRows: (string | number)[][] = rows.map((r, i) => [
+    i + 1,
+    r.code,
+    r.name,
+    r.householdCount,
+    r.householdNotReceived,
+    r.totalPheDuyet,
+    r.disbursedTotal,
+    r.interest,
+    r.interestLocked,
+    r.remaining
+  ]);
+  void downloadExcel([headers, totalRow, ...bodyRows], fileName);
 };
 
 export const exportTransactionsToExcel = (

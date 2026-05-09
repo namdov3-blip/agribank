@@ -75,6 +75,10 @@ app.delete('/api/projects/:id', (req, res) => {
 });
 
 app.post('/api/projects/import', (req, res) => handle(req, res, './backend/handlers/projects/import'));
+app.post('/api/projects/:id/approve-template', (req, res) => {
+    Object.assign(req.query, { projectId: req.params.id });
+    handle(req, res, './backend/handlers/projects/approve-template');
+});
 
 // ============ TRANSACTIONS ============
 app.get('/api/transactions', (req, res) => handle(req, res, './backend/handlers/transactions/index'));
@@ -151,6 +155,8 @@ app.delete('/api/users/:id', (req, res) => {
 app.get('/api/settings/interest-rate', (req, res) => handle(req, res, './backend/handlers/settings/interest-rate'));
 app.put('/api/settings/interest-rate', (req, res) => handle(req, res, './backend/handlers/settings/interest-rate'));
 app.put('/api/settings/bank-interest-rate', (req, res) => handle(req, res, './backend/handlers/settings/bank-interest-rate'));
+app.get('/api/settings/editing-allowed', (req, res) => handle(req, res, './backend/handlers/settings/editing-allowed'));
+app.put('/api/settings/editing-allowed', (req, res) => handle(req, res, './backend/handlers/settings/editing-allowed'));
 
 // ============ AUDIT LOGS ============
 app.get('/api/audit-logs', (req, res) => handle(req, res, './backend/handlers/audit-logs'));

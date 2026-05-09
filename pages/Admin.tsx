@@ -484,6 +484,7 @@ export const Admin: React.FC<AdminProps> = ({
                   <option value="User1">User1 (Kế toán)</option>
                   <option value="User2">User2 (NV Nghiệp vụ)</option>
                   <option value="PMB">PMB (Ban QLDA)</option>
+                  <option value="ChiefAccountant">Kế toán trưởng</option>
                   <option value="Admin">Admin (Quản trị Org)</option>
                   <option value="SuperAdmin">SuperAdmin (Toàn hệ thống)</option>
                 </select>
@@ -576,6 +577,7 @@ export const Admin: React.FC<AdminProps> = ({
                     <option value="User1">User1 (Kế toán)</option>
                     <option value="User2">User2 (NV Nghiệp vụ)</option>
                     <option value="PMB">PMB (Ban QLDA)</option>
+                    <option value="ChiefAccountant">Kế toán trưởng</option>
                     <option value="Admin">Admin (Quản trị Org)</option>
                     <option value="SuperAdmin">SuperAdmin (Toàn hệ thống)</option>
                 </select>

@@ -2,6 +2,8 @@ import { VercelRequest, VercelResponse } from '@vercel/node';
 import connectDB from '../../../lib/mongodb';
 import { BankTransaction, Settings, User } from '../../../lib/models';
 import { authMiddleware } from '../../../lib/auth';
+import { getStaffHiddenReportProjectIds } from '../../../lib/mutation-policy';
+import mongoose from 'mongoose';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
     res.setHeader('Access-Control-Allow-Origin', '*');
@@ -28,10 +30,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             return res.status(401).json({ error: 'User not found' });
         }
 
-        // Build organization filter
         const orgFilter: any = {};
-        const isAllOrg = payload.role === 'SuperAdmin' || currentUser.organization === 'Nam World';
-        if (payload.role !== 'Admin' && !isAllOrg && currentUser.organization) {
+        const roleKey = (payload.role ?? '').trim().replace(/\s+/g, '').toLowerCase();
+        const skipOrgNarrow =
+            roleKey === 'superadmin' || roleKey === 'admin' || currentUser.organization === 'Nam World';
+        if (!skipOrgNarrow && currentUser.organization) {
             orgFilter.organization = currentUser.organization;
         }
 
@@ -39,22 +42,29 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const settings = await (Settings as any).findOne({ key: 'global' });
         const openingBalance = settings?.bankOpeningBalance || 0;
 
-        // Get last bank transaction for current balance (filtered by org)
-        const lastTransaction = await (BankTransaction as any).findOne(orgFilter).sort({ _id: -1 });
-        const currentBalance = lastTransaction?.runningBalance || openingBalance;
-
-        // Calculate total deposits and withdrawals (filtered by org)
-        const transactions = await (BankTransaction as any).find(orgFilter);
-
         let totalDeposits = 0;
         let totalWithdrawals = 0;
+        let currentBalance = openingBalance;
+        let transactionCount = 0;
 
-        transactions.forEach(tx => {
+        const mongoFilter: any = { ...orgFilter };
+        const pendingIds = await getStaffHiddenReportProjectIds(payload, currentUser);
+        const pendingObjIds = pendingIds.map((i: string) => new mongoose.Types.ObjectId(i));
+        mongoFilter.$or = [
+            { projectId: { $exists: false } },
+            { projectId: null },
+            { projectId: { $nin: pendingObjIds } }
+        ];
+        const txs = await (BankTransaction as any).find(mongoFilter).sort({ date: 1, _id: 1 });
+        transactionCount = txs.length;
+        currentBalance = openingBalance;
+        txs.forEach((tx: any) => {
             if (tx.amount > 0) {
                 totalDeposits += tx.amount;
             } else {
                 totalWithdrawals += Math.abs(tx.amount);
             }
+            currentBalance += tx.amount;
         });
 
         return res.status(200).json({
@@ -65,7 +75,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 reconciledBalance: currentBalance, // Set reconciledBalance same as currentBalance for now
                 totalDeposits,
                 totalWithdrawals,
-                transactionCount: transactions.length,
+                transactionCount,
                 organization: currentUser.organization
             }
         });

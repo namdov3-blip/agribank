@@ -2,6 +2,7 @@ import { VercelRequest, VercelResponse } from '@vercel/node';
 import connectDB from '../../../lib/mongodb';
 import { Transaction, Project, BankTransaction, AuditLog, Settings } from '../../../lib/models';
 import { authMiddleware } from '../../../lib/auth';
+import { assertStaffMayMutate } from '../../../lib/mutation-policy';
 import { toZonedTime, format as formatTz } from 'date-fns-tz';
 import { calculateInterest, calculateInterestWithRateChange, getVNStartOfDay } from '../../../lib/utils/interest';
 
@@ -35,6 +36,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         if (!payload) return;
 
         await connectDB();
+
+        if (!(await assertStaffMayMutate(payload, res))) return;
 
         const id = req.query.id || (req as any).params?.id;
         if (!id || typeof id !== 'string') {

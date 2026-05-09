@@ -2,6 +2,7 @@ import { VercelRequest, VercelResponse } from '@vercel/node';
 import connectDB from '../../../lib/mongodb';
 import { User, AuditLog } from '../../../lib/models';
 import { authMiddleware, hashPassword } from '../../../lib/auth';
+import { assertStaffMayMutate } from '../../../lib/mutation-policy';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
     res.setHeader('Access-Control-Allow-Origin', '*');
@@ -13,9 +14,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     try {
-        const payload = await authMiddleware(req, res, ['Admin', 'SuperAdmin']);
-        if (!payload) return;
-
         await connectDB();
 
         const id = req.query.id || (req as any).params?.id;
@@ -25,6 +23,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
         // GET - Get user by ID
         if (req.method === 'GET') {
+            const payload = await authMiddleware(req, res, ['Admin', 'SuperAdmin', 'ChiefAccountant']);
+            if (!payload) return;
+
             const user = await (User as any).findById(id).select('-password');
             if (!user) {
                 return res.status(404).json({ error: 'Không tìm thấy người dùng' });
@@ -41,6 +42,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
         // PUT - Update user
         if (req.method === 'PUT') {
+            const payload = await authMiddleware(req, res, ['Admin', 'SuperAdmin']);
+            if (!payload) return;
+
+            if (!(await assertStaffMayMutate(payload, res))) return;
+
             const { name, password, role, permissions, organization } = req.body;
 
             const updateData: any = {};
@@ -78,6 +84,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
         // DELETE - Delete user
         if (req.method === 'DELETE') {
+            const payload = await authMiddleware(req, res, ['Admin', 'SuperAdmin']);
+            if (!payload) return;
+
+            if (!(await assertStaffMayMutate(payload, res))) return;
+
             const user = await (User as any).findById(id);
             if (!user) {
                 return res.status(404).json({ error: 'Không tìm thấy người dùng' });

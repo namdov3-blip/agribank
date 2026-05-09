@@ -21,6 +21,7 @@ interface TransactionListProps {
   searchTerm: string;
   setSearchTerm: (term: string) => void;
   onDelete?: () => void; // Callback to refresh data after deletion
+  readOnlyStaff?: boolean;
 }
 
 export const TransactionList: React.FC<TransactionListProps> = ({ 
@@ -34,7 +35,8 @@ export const TransactionList: React.FC<TransactionListProps> = ({
   onSelect, 
   searchTerm, 
   setSearchTerm, 
-  onDelete 
+  onDelete,
+  readOnlyStaff = false
 }) => {
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 20;
@@ -487,7 +489,13 @@ export const TransactionList: React.FC<TransactionListProps> = ({
                   <span>In hàng loạt ({selectedTransactions.size})</span>
                 </button>
                 <button
+                  type="button"
+                  disabled={readOnlyStaff}
                   onClick={async () => {
+                    if (readOnlyStaff) {
+                      alert('Hệ thống đang khóa chỉnh sửa.');
+                      return;
+                    }
                     const pendingIds = Array.from(selectedTransactions).filter(id => {
                       const t = transactions.find(tx => tx.id === id);
                       return t && t.status !== TransactionStatus.DISBURSED;
@@ -532,13 +540,19 @@ export const TransactionList: React.FC<TransactionListProps> = ({
                       alert('Lỗi khi giải ngân hàng loạt: ' + (error.message || 'Unknown error'));
                     }
                   }}
-                  className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-bold hover:bg-blue-700 transition-colors shadow-sm"
+                  className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-bold hover:bg-blue-700 transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   <CheckCircle size={16} />
                   <span>Giải ngân hàng loạt ({selectedTransactions.size})</span>
                 </button>
                 <button
+                  type="button"
+                  disabled={readOnlyStaff}
                   onClick={async () => {
+                    if (readOnlyStaff) {
+                      alert('Hệ thống đang khóa chỉnh sửa.');
+                      return;
+                    }
                     if (selectedTransactions.size === 0) return;
                     
                     const confirmMsg = `Bạn có chắc chắn muốn xóa ${selectedTransactions.size} giao dịch đã chọn?\n\nHành động này không thể hoàn tác.`;
@@ -583,7 +597,7 @@ export const TransactionList: React.FC<TransactionListProps> = ({
                       alert('Lỗi khi xóa giao dịch: ' + (error.message || 'Unknown error'));
                     }
                   }}
-                  className="flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded-lg text-sm font-bold hover:bg-red-700 transition-colors shadow-sm"
+                  className="flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded-lg text-sm font-bold hover:bg-red-700 transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   <Trash2 size={16} />
                   <span>Xóa giao dịch ({selectedTransactions.size})</span>

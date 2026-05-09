@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { HashRouter } from 'react-router-dom';
 import { Sidebar } from './components/Sidebar';
 import { Dashboard } from './pages/Dashboard';
@@ -25,7 +25,7 @@ import {
   BankTransaction,
   BankTransactionType
 } from './types';
-import { calculateInterest, formatCurrency } from './utils/helpers';
+import { calculateInterest, formatCurrency, isStaffEditingPolicyExempt } from './utils/helpers';
 
 // --- SESSION SETTINGS ---
 const IDLE_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes idle => auto logout
@@ -76,12 +76,37 @@ const App: React.FC = () => {
   const [interestRateChangeDate, setInterestRateChangeDate] = useState<string | null>(null);
   const [interestRateBefore, setInterestRateBefore] = useState<number | null>(null);
   const [interestRateAfter, setInterestRateAfter] = useState<number | null>(null);
+  const [editingAllowed, setEditingAllowed] = useState(true);
 
-  // Load all data from API
-  const loadAllData = useCallback(async (silent: boolean = false) => {
+  /** DA đã được tính vào báo cáo (mọi role): không chờ template, không chỉ có GD chờ duyệt import */
+  const reportingProjects = useMemo(() => {
+    if (!currentUser) return projects;
+    return projects.filter((p) => {
+      if (p.templateApproved === false) return false;
+      const hasStaffPending = transactions.some(
+        (t) =>
+          String(t.projectId) === String(p.id) &&
+          !!(t as { staffImportPending?: boolean }).staffImportPending
+      );
+      if (hasStaffPending) return false;
+      return transactions.some((t) => String(t.projectId) === String(p.id));
+    });
+  }, [projects, transactions, currentUser]);
+
+  const mayFetchAdminBundles = useCallback((viewer?: User | null) => {
+    return !!(
+      viewer &&
+      isStaffEditingPolicyExempt(viewer.role, viewer.permissions)
+    );
+  }, []);
+
+  // Load all data from API (chỉ gọi /users + /audit-logs khi có quyền Admin — tránh 403 và log console)
+  const loadAllData = useCallback(async (silent: boolean = false, viewerOverride?: User | null) => {
     if (!silent) setLoading(true);
     setError(null);
     try {
+      const viewer = viewerOverride !== undefined ? viewerOverride : currentUser;
+      const fetchAdmin = mayFetchAdminBundles(viewer);
       const [
         projectsRes,
         transactionsRes,
@@ -95,17 +120,18 @@ const App: React.FC = () => {
         api.transactions.list({ limit: 10000 }).catch(() => ({ data: [] })),
         api.bank.getBalance().catch(() => ({ data: { openingBalance: 0, currentBalance: 0, reconciledBalance: 0 } })),
         api.bank.listTransactions().catch(() => ({ data: [] })),
-        api.users.list().catch(() => ({ data: [] })),
-        api.audit.list().catch(() => ({ data: [] })),
-        api.settings.getInterestRate().catch(() => ({ 
-          data: { 
-            interestRate: 6.5, 
-            bankInterestRate: 0.5, 
+        fetchAdmin ? api.users.list().catch(() => ({ data: [] })) : Promise.resolve({ data: [] as User[] }),
+        fetchAdmin ? api.audit.list().catch(() => ({ data: [] })) : Promise.resolve({ data: [] as AuditLogItem[] }),
+        api.settings.getInterestRate().catch(() => ({
+          data: {
+            interestRate: 6.5,
+            bankInterestRate: 0.5,
             history: [],
             interestRateChangeDate: null,
             interestRateBefore: null,
-            interestRateAfter: null
-          } 
+            interestRateAfter: null,
+            editingAllowed: true
+          }
         }))
       ]);
 
@@ -122,57 +148,53 @@ const App: React.FC = () => {
       setInterestRateChangeDate(settingsRes.data?.interestRateChangeDate || null);
       setInterestRateBefore(settingsRes.data?.interestRateBefore || null);
       setInterestRateAfter(settingsRes.data?.interestRateAfter || null);
+      setEditingAllowed(settingsRes.data?.editingAllowed !== false);
     } catch (err: any) {
       console.error('Failed to load data:', err);
       setError('Không thể tải dữ liệu. Vui lòng thử lại.');
     } finally {
       if (!silent) setLoading(false);
     }
-  }, []);
+  }, [currentUser, mayFetchAdminBundles]);
 
-  // Check auth token on mount
+  /** Giữ phiên bản mới nhất để effects không phụ thuộc loadAllData (tránh vòng lặp khi currentUser/loadAllData đổi identity) */
+  const loadAllDataRef = useRef(loadAllData);
+  loadAllDataRef.current = loadAllData;
+
+  // Check auth token on mount — chạy đúng 1 lần; không được phụ thuộc loadAllData
   useEffect(() => {
     const token = localStorage.getItem('auth_token');
-    console.log('[MOUNT] Start - Token present:', !!token);
 
     if (token) {
-      console.log('[MOUNT] Verifying token through api.auth.me()...');
       api.auth.me()
         .then(async res => {
-          console.log('[MOUNT] Verify Result:', res);
           if (res.data && res.data.id) {
-            console.log('[MOUNT] Valid user data received, setting user and loading data');
             setCurrentUser(res.data);
-            await loadAllData(); // Await data before finishing mount loading
+            await loadAllDataRef.current(false, res.data);
           } else {
-            console.warn('[MOUNT] Auth data missing or invalid ID:', res);
             handleLogout('Dữ liệu xác thực không hợp lệ (Thiếu ID)');
           }
         })
         .catch((err) => {
-          console.error('[MOUNT] Auth verification error:', err);
-          // If session expired, just clear token silently (no alert/redirect needed)
-          // The user will see login page naturally
           if (err.message === 'Session expired') {
-            console.log('[MOUNT] Session expired, clearing token silently');
             localStorage.removeItem('auth_token');
           } else {
-            // For other errors, show message
             handleLogout(`Lỗi kết nối xác thực: ${err.message}`);
           }
         })
         .finally(() => {
-          console.log('[MOUNT] Finalizing loading state');
           setLoading(false);
         });
     } else {
-      console.log('[MOUNT] No token found in localStorage');
       setLoading(false);
     }
-  }, [loadAllData]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps — chỉ khi mount; loadAllData qua ref
+  }, []);
 
   // Background polling for real-time updates
-  useDashboardPoll(() => loadAllData(true), !!currentUser);
+  useDashboardPoll(() => {
+    loadAllDataRef.current(true);
+  }, !!currentUser);
 
   // Sync selected transaction when transactions list updates
   useEffect(() => {
@@ -185,27 +207,22 @@ const App: React.FC = () => {
     }
   }, [transactions, selectedTransaction]);
 
-  // Trigger monthly bank interest accrual
+  // Trigger monthly bank interest accrual — 1 lần mỗi user.id, không ép chạy lại khi loadAllData đổi reference
   useEffect(() => {
-    if (currentUser) {
-      console.log('Checking for monthly bank interest accrual...');
-      api.bank.accrueInterest()
-        .then(res => {
-          if (res.data?.accruedCount > 0) {
-            console.log(`Auto-accrued bank interest for ${res.data.accruedCount} organizations.`);
-            loadAllData(true); // Refresh data silently
-          }
-        })
-        .catch(err => {
-          console.warn('Bank interest accrual trigger (might be skip if not 1st of month):', err.message);
-        });
-    }
-  }, [currentUser, loadAllData]);
+    if (!currentUser?.id) return;
+    api.bank.accrueInterest().then(res => {
+      if (res.data?.accruedCount != null && res.data.accruedCount > 0) {
+        void loadAllDataRef.current(true);
+      }
+    }).catch(() => {
+      /* bỏ qua khi không phải đầu tháng / không đủ quyền */
+    });
+  }, [currentUser?.id]);
 
   // Handle login
   const handleLogin = async (user: User) => {
     setCurrentUser(user);
-    await loadAllData();
+    await loadAllData(false, user);
   };
 
   // Handle logout
@@ -336,7 +353,7 @@ const App: React.FC = () => {
   // Handle refund via API
   const handleRefundTransaction = async (id: string, refundedAmount: number) => {
     try {
-      await api.transactions.refund(id, currentUser?.name || 'Unknown', refundedAmount);
+      await api.transactions.refund(id, refundedAmount, undefined, currentUser?.name || 'Unknown');
       const [txRes, balanceRes, bankTxRes] = await Promise.all([
         api.transactions.list({ limit: 10000 }),
         api.bank.getBalance(),
@@ -400,11 +417,17 @@ const App: React.FC = () => {
       );
     }
 
+    const readOnlyStaff = !!(
+      currentUser &&
+      !isStaffEditingPolicyExempt(currentUser.role, currentUser.permissions) &&
+      !editingAllowed
+    );
+
     switch (activeTab) {
       case 'dashboard':
         return <Dashboard
           transactions={transactions}
-          projects={projects}
+          projects={reportingProjects}
           interestRate={interestRate}
           interestRateChangeDate={interestRateChangeDate}
           interestRateBefore={interestRateBefore}
@@ -421,6 +444,9 @@ const App: React.FC = () => {
           interestRateChangeDate={interestRateChangeDate}
           interestRateBefore={interestRateBefore}
           interestRateAfter={interestRateAfter}
+          readOnlyStaff={readOnlyStaff}
+          currentUser={currentUser}
+          onApproveTemplateDone={() => loadAllData(true)}
           onImport={handleImportProject}
           onUpdateProject={async (p) => {
             await api.projects.update(p.id, p);
@@ -454,7 +480,7 @@ const App: React.FC = () => {
       case 'balance':
         return <BankBalance
           transactions={transactions}
-          projects={projects}
+          projects={reportingProjects}
           bankAccount={bankAccount}
           bankTransactions={bankTransactions}
           interestRate={interestRate}
@@ -462,6 +488,7 @@ const App: React.FC = () => {
           interestRateBefore={interestRateBefore}
           interestRateAfter={interestRateAfter}
           currentUser={currentUser!}
+          readOnlyStaff={readOnlyStaff}
           onAddBankTransaction={handleAddBankTransaction}
           onAdjustOpeningBalance={async (b) => {
             await api.bank.adjustOpening(b);
@@ -473,12 +500,13 @@ const App: React.FC = () => {
       case 'transactions':
         return <TransactionList
           transactions={transactions}
-          projects={projects}
+          projects={reportingProjects}
           interestRate={interestRate}
           interestRateChangeDate={interestRateChangeDate}
           interestRateBefore={interestRateBefore}
           interestRateAfter={interestRateAfter}
           currentUser={currentUser!}
+          readOnlyStaff={readOnlyStaff}
           onSelect={setSelectedTransaction}
           searchTerm={transactionSearchTerm}
           setSearchTerm={setTransactionSearchTerm}
@@ -529,7 +557,7 @@ const App: React.FC = () => {
       case 'interestCalc':
         return <InterestCalculator
           transactions={transactions}
-          projects={projects}
+          projects={reportingProjects}
           interestRate={interestRate}
           currentUser={currentUser!}
         />;
@@ -582,7 +610,17 @@ const App: React.FC = () => {
     <HashRouter>
       <div className="min-h-screen text-slate-800 font-sans selection:bg-blue-100 selection:text-blue-900">
         <div>
-          <Sidebar activeTab={activeTab} setActiveTab={setActiveTab} currentUser={currentUser} onLogout={handleLogout} />
+          <Sidebar
+            activeTab={activeTab}
+            setActiveTab={setActiveTab}
+            currentUser={currentUser}
+            onLogout={handleLogout}
+            editingAllowed={editingAllowed}
+            onEditingAllowedChange={async (allowed) => {
+              const res = await api.settings.updateEditingAllowed(allowed);
+              setEditingAllowed((res as { data?: { editingAllowed?: boolean } }).data?.editingAllowed !== false);
+            }}
+          />
         </div>
         <main className="ml-64 p-8 min-h-screen relative bg-[#f8fafc]">
           {renderContent()}
@@ -604,6 +642,11 @@ const App: React.FC = () => {
             currentUser={currentUser}
             setAuditLogs={setAuditLogs}
             handleAddBankTransaction={handleAddBankTransaction}
+            readOnlyStaff={!!(
+              currentUser &&
+              !isStaffEditingPolicyExempt(currentUser.role, currentUser.permissions) &&
+              !editingAllowed
+            )}
           />
         )}
       </div>

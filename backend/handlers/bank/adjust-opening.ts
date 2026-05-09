@@ -2,6 +2,7 @@ import { VercelRequest, VercelResponse } from '@vercel/node';
 import connectDB from '../../../lib/mongodb';
 import { BankTransaction, Settings, AuditLog, User } from '../../../lib/models';
 import { authMiddleware } from '../../../lib/auth';
+import { assertStaffMayMutate } from '../../../lib/mutation-policy';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
     res.setHeader('Access-Control-Allow-Origin', '*');
@@ -21,6 +22,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         if (!payload) return;
 
         await connectDB();
+
+        if (!(await assertStaffMayMutate(payload, res))) return;
 
         const { openingBalance } = req.body;
 

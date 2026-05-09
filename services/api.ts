@@ -148,7 +148,10 @@ export const projectsAPI = {
     import: (data: { fileData?: string; project?: any; transactions?: any[]; importMode?: 'create' | 'merge'; [key: string]: any }) => fetchAPI<{ data: any }>('/projects/import', {
         method: 'POST',
         body: JSON.stringify(data)
-    })
+    }),
+
+    approveTemplate: (id: string) =>
+        fetchAPI<{ data: any }>(`/projects/${id}/approve-template`, { method: 'POST' })
 };
 
 // ============ TRANSACTIONS ============
@@ -282,6 +285,12 @@ export const settingsAPI = {
         fetchAPI<{ data: any }>('/settings/interest-rate', {
             method: 'PUT',
             body: JSON.stringify(settings)
+        }),
+
+    updateEditingAllowed: (editingAllowed: boolean) =>
+        fetchAPI<{ data: { editingAllowed: boolean } }>('/settings/editing-allowed', {
+            method: 'PUT',
+            body: JSON.stringify({ editingAllowed })
         })
 };
 

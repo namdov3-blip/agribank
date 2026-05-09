@@ -42,6 +42,17 @@ export function getTokenFromRequest(req: VercelRequest): string | null {
     return null;
 }
 
+/** Chuẩn hóa role để khớp JWT/DB không phụ thuộc hoa thường / khoảng trắng */
+function normalizeRoleKey(role: string | undefined): string {
+    return (role ?? '').trim().replace(/\s+/g, '').toLowerCase();
+}
+
+/** Kiểm tra quyền theo danh sách vai trò (so khớp đã normalize) */
+export function roleMatchesAllowedList(userRole: string | undefined, allowedRoles: string[]): boolean {
+    const key = normalizeRoleKey(userRole);
+    return allowedRoles.some((r) => normalizeRoleKey(r) === key);
+}
+
 export async function authMiddleware(
     req: VercelRequest,
     res: VercelResponse,
@@ -61,7 +72,7 @@ export async function authMiddleware(
         return null;
     }
 
-    if (allowedRoles && !allowedRoles.includes(payload.role)) {
+    if (allowedRoles && !roleMatchesAllowedList(payload.role, allowedRoles)) {
         res.status(403).json({ error: 'Forbidden - Insufficient permissions' });
         return null;
     }

@@ -23,6 +23,8 @@ interface TransactionModalProps {
   currentUser: User;
   setAuditLogs: React.Dispatch<React.SetStateAction<AuditLogItem[]>>;
   handleAddBankTransaction: (type: BankTransactionType, amount: number, note: string, date: string, projectId?: string) => void;
+  /** Khóa mọi thao tác ghi (Import / Admin bật Don’t Allow) */
+  readOnlyStaff?: boolean;
 }
 
 export const TransactionModal: React.FC<TransactionModalProps> = ({
@@ -38,7 +40,8 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
   onUpdateTransaction,
   currentUser,
   setAuditLogs,
-  handleAddBankTransaction
+  handleAddBankTransaction,
+  readOnlyStaff = false
 }) => {
   const [showHistory, setShowHistory] = useState(false);
   const [supplementaryAmount, setSupplementaryAmount] = useState(transaction?.supplementaryAmount || 0);
@@ -65,6 +68,12 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
   const [isWithdrawOpen, setIsWithdrawOpen] = useState(false);
 
   if (!transaction) return null;
+
+  const blockIfReadOnly = (): boolean => {
+    if (!readOnlyStaff) return false;
+    alert('Hệ thống đang khóa chỉnh sửa đối với tài khoản của bạn. Liên hệ Kế toán trưởng hoặc Admin.');
+    return true;
+  };
 
   // Initialize edited transaction
   React.useEffect(() => {
@@ -221,6 +230,7 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
   }, [principalBase, baseDate, calcEndDate, interestRate, interestRateChangeDate, interestRateBefore, interestRateAfter]);
 
   const handleConfirmPaymentDate = async () => {
+    if (blockIfReadOnly()) return;
     if (!transaction.id || !paymentDateInput) {
       alert('Vui lòng chọn ngày chi trả');
       return;
@@ -266,6 +276,7 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
   };
 
   const handleConfirmPayment = () => {
+    if (blockIfReadOnly()) return;
     if (!isDisbursed) {
       // Priority: 1) paymentDateInput (if user just changed it), 2) transaction.disbursementDate, 3) today
       let effectiveDisbursementDate: Date;
@@ -331,6 +342,7 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
   };
 
   const handleRefundMoney = async () => {
+    if (blockIfReadOnly()) return;
     const parsedAmount = parseNumberFromComma(refundAmountInput);
     if (parsedAmount <= 0) {
       alert('Vui lòng nhập số tiền muốn nạp lớn hơn 0');
@@ -399,6 +411,7 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
   };
 
   const handleWithdraw = async () => {
+    if (blockIfReadOnly()) return;
     const parsedAmount = parseNumberFromComma(withdrawAmountInput);
     if (parsedAmount <= 0) {
       alert('Vui lòng nhập số tiền muốn rút lớn hơn 0');
@@ -490,6 +503,7 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
   };
 
   const handleSaveSupplementary = async () => {
+    if (blockIfReadOnly()) return;
     const parsedAmount = parseNumberFromComma(supplementaryAmountInput);
     if (parsedAmount <= 0) {
       alert('Vui lòng nhập số tiền bổ sung lớn hơn 0');
@@ -568,6 +582,7 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
   };
 
   const handleSaveDetails = () => {
+    if (blockIfReadOnly()) return;
     if (editedTransaction) {
       const now = new Date();
       const updated = {
@@ -647,6 +662,12 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
 
       {/* --- WEB UI --- */}
       <GlassCard className="w-full max-w-4xl max-h-[90vh] overflow-hidden flex flex-col relative bg-white/95 border-slate-300 shadow-2xl ring-1 ring-black/5 no-print">
+
+        {readOnlyStaff && (
+          <div className="px-4 py-2 bg-amber-50 border-b border-amber-200 text-xs font-bold text-amber-900 text-center">
+            Chỉ xem — Admin / Kế toán trưởng đã khóa chỉnh sửa đối với user thường.
+          </div>
+        )}
 
         {/* Header */}
         <div className="flex justify-between items-start p-6 border-b border-slate-200 bg-slate-50/80 backdrop-blur-md">

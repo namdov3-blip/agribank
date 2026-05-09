@@ -1,7 +1,9 @@
 import { VercelRequest, VercelResponse } from '@vercel/node';
 import connectDB from '../../../lib/mongodb';
 import { Transaction, Project, User, AuditLog } from '../../../lib/models';
+import mongoose from 'mongoose';
 import { authMiddleware } from '../../../lib/auth';
+import { getStaffHiddenReportProjectIds } from '../../../lib/mutation-policy';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
     res.setHeader('Access-Control-Allow-Origin', '*');
@@ -30,24 +32,44 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
         const { projectId, status, search, page = '1', limit = '50' } = req.query;
 
-        // Build project filter for organization
         let projectFilter: any = {};
-        const isAllOrg = payload.role === 'SuperAdmin' || currentUser.organization === 'Nam World';
-        if (payload.role !== 'Admin' && !isAllOrg && currentUser.organization) {
+        const roleKey = (payload.role ?? '').trim().replace(/\s+/g, '').toLowerCase();
+        const skipOrgNarrow =
+            roleKey === 'superadmin' ||
+            roleKey === 'admin' ||
+            currentUser.organization === 'Nam World';
+        if (!skipOrgNarrow && currentUser.organization) {
             projectFilter.organization = currentUser.organization;
         }
+        /** Chỉ dự án đã được tính vào báo cáo (không chờ duyệt template / không chỉ có GD chờ import) — mọi role */
+        const reportHiddenIds = await getStaffHiddenReportProjectIds(payload, currentUser);
+        const hiddenObjIds = reportHiddenIds.map((i) => new mongoose.Types.ObjectId(i));
+        if (reportHiddenIds.length > 0) {
+            projectFilter._id = { $nin: hiddenObjIds };
+        }
 
-        // Get list of project IDs user can access
+        const orgAllowsProjectAccess = (proj: any): boolean => {
+            if (!proj) return false;
+            if (skipOrgNarrow) return true;
+            if (!currentUser.organization) return false;
+            return proj.organization === currentUser.organization;
+        };
+
         let accessibleProjectIds: string[] = [];
 
         if (projectId) {
-            // If specific project requested, check access
             const project = await (Project as any).findById(projectId);
             if (!project) {
                 return res.status(404).json({ error: 'Project not found' });
             }
-            if (payload.role !== 'Admin' && !isAllOrg && project.organization !== currentUser.organization) {
+            if (!orgAllowsProjectAccess(project)) {
                 return res.status(403).json({ error: 'Access denied to this project' });
+            }
+            const hiddenSet = new Set(reportHiddenIds);
+            if (hiddenSet.has(project._id.toString())) {
+                return res.status(403).json({
+                    error: 'Dự án chờ duyệt chỉ được xem ở tab Quản lý dự án'
+                });
             }
             accessibleProjectIds = [projectId as string];
         } else {
@@ -69,6 +91,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             filter['household.name'] = { $regex: search, $options: 'i' };
         }
 
+        filter.staffImportPending = { $ne: true };
+
         const pageNum = parseInt(page as string) || 1;
         const rawLimit = parseInt(limit as string) || 50;
         // Cap at 10000 to prevent memory issues, but allow large bulk loads
@@ -77,7 +101,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
         const [transactions, total] = await Promise.all([
             (Transaction as any).find(filter)
-                .populate('projectId', 'code name interestStartDate organization')
+                .populate('projectId', 'code name interestStartDate organization templateApproved')
                 .sort({ _id: 1 })
                 .collation({ locale: 'en', numericOrdering: true })
                 .skip(skip)

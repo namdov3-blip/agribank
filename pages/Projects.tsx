@@ -1,9 +1,9 @@
 import React, { useRef, useState, useMemo } from 'react';
 import api from '../services/api';
 import { GlassCard } from '../components/GlassCard';
-import { formatDate, formatCurrency, calculateInterest, calculateInterestWithRateChange, exportProjectsToExcel, roundTo2, roundHalfUp } from '../utils/helpers';
-import { Plus, FolderKanban, Coins, Loader2, X, Check, FileSpreadsheet, Edit2, Eye, Calendar, Save, Tag, Type, Trash2, Search, ChevronLeft, ChevronRight, Download } from 'lucide-react';
-import { Project, Transaction, TransactionStatus } from '../types';
+import { formatDate, formatCurrency, calculateInterest, calculateInterestWithRateChange, exportProjectsToExcel, roundTo2, roundHalfUp, isElevatedWorkspaceRole } from '../utils/helpers';
+import { Plus, FolderKanban, Coins, Loader2, X, Check, FileSpreadsheet, Edit2, Eye, Calendar, Save, Tag, Type, Trash2, Search, ChevronLeft, ChevronRight, Download, ShieldCheck } from 'lucide-react';
+import { Project, Transaction, TransactionStatus, User } from '../types';
 
 interface ProjectsProps {
   projects: Project[];
@@ -16,6 +16,9 @@ interface ProjectsProps {
   onUpdateProject: (updatedProject: Project) => void;
   onViewDetails: (projectCode: string) => void;
   onDeleteProject: (id: string) => void;
+  readOnlyStaff?: boolean;
+  currentUser?: User | null;
+  onApproveTemplateDone?: () => void | Promise<void>;
 }
 
 interface PreviewData {
@@ -43,8 +46,36 @@ export const Projects: React.FC<ProjectsProps> = ({
   onImport,
   onUpdateProject,
   onViewDetails,
-  onDeleteProject
+  onDeleteProject,
+  readOnlyStaff = false,
+  currentUser = null,
+  onApproveTemplateDone
 }) => {
+  const elevated = !!(currentUser && isElevatedWorkspaceRole(currentUser.role));
+
+  const pendingTemplateCount = useMemo(() => {
+    const ids = new Set<string>();
+    for (const p of projects) {
+      if (p.templateApproved === false && p.id) ids.add(p.id);
+    }
+    for (const t of transactions) {
+      if ((t as { staffImportPending?: boolean }).staffImportPending && t.projectId) {
+        ids.add(String(t.projectId));
+      }
+    }
+    return ids.size;
+  }, [projects, transactions]);
+
+  const handleApproveTemplate = async (proj: Project) => {
+    if (!elevated || !proj.id) return;
+    if (!window.confirm(`Duyệt template cho dự án "${proj.code}"?\nSau khi duyệt, mọi user đơn vị sẽ thấy dự án và số liệu trong báo cáo.`)) return;
+    try {
+      await api.projects.approveTemplate(proj.id);
+      await onApproveTemplateDone?.();
+    } catch (e: any) {
+      alert(e?.message || 'Duyệt thất bại');
+    }
+  };
   const fileInputRef = useRef<HTMLInputElement>(null);
   const dateInputRef = useRef<HTMLInputElement>(null);
   const [isUploading, setIsUploading] = useState(false);
@@ -107,6 +138,19 @@ export const Projects: React.FC<ProjectsProps> = ({
     return actualTotal > 0 ? actualTotal : project.totalBudget;
   }, [transactions, calculateInterestSmart]);
 
+  /** Chờ duyệt template hoặc có GD import chờ — không tính vào box Tổng giá trị dự án */
+  const isProjectPendingApproval = React.useCallback(
+    (p: Project) => {
+      if (p.templateApproved === false) return true;
+      return transactions.some(
+        (t) =>
+          String(t.projectId) === String(p.id) &&
+          !!(t as { staffImportPending?: boolean }).staffImportPending
+      );
+    },
+    [transactions]
+  );
+
   // Filter projects based on search term
   const filteredProjects = useMemo(() => {
     if (!searchTerm.trim()) return projects;
@@ -161,6 +205,7 @@ export const Projects: React.FC<ProjectsProps> = ({
 
   // Tính tổng giá trị ban đầu (không có lãi, không có tiền bổ sung) - chỉ tính cho filtered projects
   const totalInitialValue = filteredProjects.reduce((acc, p) => {
+    if (isProjectPendingApproval(p)) return acc;
     const projectTrans = transactions.filter(t => {
       const pIdStr = (t.projectId && (t.projectId as any)._id) ? (t.projectId as any)._id.toString() : t.projectId?.toString();
       return pIdStr === p.id || pIdStr === (p as any)._id;
@@ -169,8 +214,9 @@ export const Projects: React.FC<ProjectsProps> = ({
     return acc + (initialTotal > 0 ? initialTotal : p.totalBudget);
   }, 0);
 
-  // Tính tổng giá trị hiện tại (bao gồm lãi + tiền bổ sung) - chỉ tính cho filtered projects
+  // Tính tổng giá trị hiện tại (bao gồm lãi + tiền bổ sung) — chỉ dự án đã duyệt (không chờ duyệt)
   const totalValue = filteredProjects.reduce((acc, p) => {
+    if (isProjectPendingApproval(p)) return acc;
     return acc + getProjectActualTotal(p);
   }, 0);
 
@@ -254,6 +300,10 @@ export const Projects: React.FC<ProjectsProps> = ({
 
   const handleConfirmImport = async (mode: 'create' | 'merge') => {
     if (!previewData) return;
+    if (readOnlyStaff) {
+      alert('Không thể xác nhận import khi hệ thống đang khóa chỉnh sửa.');
+      return;
+    }
 
     try {
       const response = await api.projects.import({
@@ -343,6 +393,10 @@ export const Projects: React.FC<ProjectsProps> = ({
   };
 
   const saveProjectUpdate = () => {
+    if (readOnlyStaff) {
+      alert('Không thể lưu khi hệ thống đang khóa chỉnh sửa.');
+      return;
+    }
     if (editingProject) {
       onUpdateProject(editingProject);
       setEditingProject(null);
@@ -368,13 +422,28 @@ export const Projects: React.FC<ProjectsProps> = ({
         </div>
         <button
           onClick={handleNewProjectClick}
-          disabled={isUploading}
+          disabled={isUploading || readOnlyStaff}
           className="flex items-center gap-2 px-5 py-2 text-xs font-bold bg-blue-600 text-white rounded-lg hover:bg-blue-700 shadow-lg shadow-blue-200 transition-all disabled:opacity-70 disabled:cursor-not-allowed"
         >
           {isUploading ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} strokeWidth={3} />}
           <span>{isUploading ? 'ĐANG XỬ LÝ...' : 'DỰ ÁN MỚI'}</span>
         </button>
       </div>
+
+      {readOnlyStaff && (
+        <div className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-2 text-xs font-bold text-amber-900">
+          Bạn chỉ được xem: hệ thống đang khóa chỉnh sửa (Upload / Sửa / Xóa tạm tắt).
+        </div>
+      )}
+
+      {elevated && (
+        <div className="rounded-xl border-2 border-emerald-400 bg-emerald-50 px-4 py-3 text-sm text-emerald-950 shadow-sm">
+          <p className="font-black text-emerald-900">
+            Số dự án cần phê duyệt:{' '}
+            <span className={pendingTemplateCount > 0 ? 'text-amber-800' : 'text-emerald-800'}>{pendingTemplateCount}</span>
+          </p>
+        </div>
+      )}
 
       {/* Stats Boxes */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -461,6 +530,7 @@ export const Projects: React.FC<ProjectsProps> = ({
                 <th className="px-4 py-3.5 text-center w-12 border-r border-slate-200">STT</th>
                 <th className="px-4 py-3.5 border-r border-slate-200">Mã dự án</th>
                 <th className="px-4 py-3.5 border-r border-slate-200">Tên dự án</th>
+                <th className="px-4 py-3.5 text-center whitespace-nowrap border-r border-slate-200">Trạng thái</th>
                 <th className="px-4 py-3.5 text-right border-r border-slate-200">Tổng ngân sách</th>
                 <th className="px-4 py-3.5 text-center border-r border-slate-200">Ngày Upload</th>
                 <th className="px-4 py-3.5 text-center border-r border-slate-200">Ngày GN & Tính lãi</th>
@@ -531,6 +601,14 @@ export const Projects: React.FC<ProjectsProps> = ({
                 const percent = actualTotalBudget > 0 ? (disbursed / actualTotalBudget) * 100 : 0;
                 const percentStr = roundHalfUp(percent, 1).toFixed(1);
 
+                const hasStaffPendingTx = transactions.some(
+                  (t) =>
+                    String(t.projectId) === String(project.id) &&
+                    !!(t as { staffImportPending?: boolean }).staffImportPending
+                );
+                const needsElevatedReview =
+                  project.templateApproved === false || hasStaffPendingTx;
+
                 return (
                   <tr key={project.id} className="hover:bg-blue-50/30 transition-colors">
                     <td className="px-4 py-3 text-center text-slate-700 font-bold border-r border-slate-200">
@@ -543,6 +621,17 @@ export const Projects: React.FC<ProjectsProps> = ({
                     </td>
                     <td className="px-4 py-3 border-r border-slate-200">
                       <p className="text-slate-900 font-bold">{project.name}</p>
+                    </td>
+                    <td className="px-4 py-3 text-center border-r border-slate-200">
+                      {needsElevatedReview ? (
+                        <span className="inline-block text-[11px] font-bold px-2.5 py-1 rounded-lg bg-amber-100 text-amber-900 border border-amber-200">
+                          Chờ duyệt
+                        </span>
+                      ) : (
+                        <span className="inline-block text-[11px] font-bold px-2.5 py-1 rounded-lg bg-emerald-50 text-emerald-800 border border-emerald-200">
+                          Duyệt
+                        </span>
+                      )}
                     </td>
                     <td className="px-4 py-3 text-right font-bold text-slate-800 border-r border-slate-200">
                       {formatCurrency(actualTotalBudget)}
@@ -568,9 +657,20 @@ export const Projects: React.FC<ProjectsProps> = ({
                     </td>
                     <td className="px-4 py-3 text-center">
                       <div className="flex items-center justify-center gap-2">
+                        {elevated && needsElevatedReview && (
+                          <button
+                            type="button"
+                            onClick={() => handleApproveTemplate(project)}
+                            className="p-1.5 text-emerald-700 hover:bg-emerald-100 rounded-lg transition-all border border-emerald-200"
+                            title="Duyệt template / giao dịch import"
+                          >
+                            <ShieldCheck size={16} strokeWidth={2} />
+                          </button>
+                        )}
                         <button
                           onClick={() => openEditModal(project)}
-                          className="p-1.5 text-slate-500 hover:text-blue-600 hover:bg-blue-100 rounded-lg transition-all border border-transparent hover:border-blue-200"
+                          disabled={readOnlyStaff}
+                          className="p-1.5 text-slate-500 hover:text-blue-600 hover:bg-blue-100 rounded-lg transition-all border border-transparent hover:border-blue-200 disabled:opacity-40 disabled:pointer-events-none"
                           title="Cập nhật dự án"
                         >
                           <Edit2 size={16} strokeWidth={2} />
@@ -588,7 +688,8 @@ export const Projects: React.FC<ProjectsProps> = ({
                               onDeleteProject(project.id!);
                             }
                           }}
-                          className="p-1.5 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all border border-transparent hover:border-red-100"
+                          disabled={readOnlyStaff}
+                          className="p-1.5 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all border border-transparent hover:border-red-100 disabled:opacity-40 disabled:pointer-events-none"
                           title="Xóa dự án"
                         >
                           <Trash2 size={16} strokeWidth={2} />
@@ -708,8 +809,10 @@ export const Projects: React.FC<ProjectsProps> = ({
                 Hủy bỏ
               </button>
               <button
+                type="button"
                 onClick={saveProjectUpdate}
-                className="px-5 py-2 text-xs font-bold bg-blue-600 text-white rounded-lg hover:bg-blue-700 shadow-lg shadow-blue-200 transition-all flex items-center gap-2"
+                disabled={readOnlyStaff}
+                className="px-5 py-2 text-xs font-bold bg-blue-600 text-white rounded-lg hover:bg-blue-700 shadow-lg shadow-blue-200 transition-all flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <Save size={14} /> Lưu thay đổi
               </button>
@@ -864,15 +967,19 @@ export const Projects: React.FC<ProjectsProps> = ({
                 <div className="flex flex-col gap-3">
                   <div className="flex gap-3 justify-center">
                     <button
+                      type="button"
                       onClick={() => setImportMode('create')}
-                      className="px-6 py-2.5 rounded-lg bg-blue-600 text-white text-xs font-bold hover:bg-blue-700 shadow-lg shadow-blue-200 transition-all flex items-center gap-2"
+                      disabled={readOnlyStaff}
+                      className="px-6 py-2.5 rounded-lg bg-blue-600 text-white text-xs font-bold hover:bg-blue-700 shadow-lg shadow-blue-200 transition-all flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       <Plus size={16} strokeWidth={3} />
                       Tạo dự án mới
                     </button>
                     <button
+                      type="button"
                       onClick={() => setImportMode('merge')}
-                      className="px-6 py-2.5 rounded-lg bg-emerald-600 text-white text-xs font-bold hover:bg-emerald-700 shadow-lg shadow-emerald-200 transition-all flex items-center gap-2"
+                      disabled={readOnlyStaff}
+                      className="px-6 py-2.5 rounded-lg bg-emerald-600 text-white text-xs font-bold hover:bg-emerald-700 shadow-lg shadow-emerald-200 transition-all flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       <FileSpreadsheet size={16} strokeWidth={3} />
                       Merge vào dự án có sẵn
@@ -899,8 +1006,10 @@ export const Projects: React.FC<ProjectsProps> = ({
                     Hủy bỏ
                   </button>
                   <button
+                    type="button"
+                    disabled={readOnlyStaff}
                     onClick={() => handleConfirmImport(importMode)}
-                    className={`px-6 py-2.5 rounded-lg text-white text-xs font-bold shadow-lg transition-all flex items-center gap-2 ${
+                    className={`px-6 py-2.5 rounded-lg text-white text-xs font-bold shadow-lg transition-all flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed ${
                       importMode === 'create'
                         ? 'bg-blue-600 hover:bg-blue-700 shadow-blue-200'
                         : 'bg-emerald-600 hover:bg-emerald-700 shadow-emerald-200'

@@ -27,9 +27,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                     key: 'global',
                     interestRate: 6.5,
                     interestHistory: [],
-                    bankOpeningBalance: 0
+                    bankOpeningBalance: 0,
+                    editingAllowed: true
                 });
             }
+
+            const editingAllowed = settings.editingAllowed !== false;
 
             return res.status(200).json({
                 success: true,
@@ -39,7 +42,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                     interestRateChangeDate: settings.interestRateChangeDate,
                     interestRateBefore: settings.interestRateBefore,
                     interestRateAfter: settings.interestRateAfter,
-                    interestHistory: settings.interestHistory || []
+                    interestHistory: settings.interestHistory || [],
+                    editingAllowed
                 }
             });
         }
@@ -74,7 +78,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                     key: 'global',
                     interestRate: interestRate || 6.5,
                     interestHistory: [],
-                    bankOpeningBalance: 0
+                    bankOpeningBalance: 0,
+                    editingAllowed: true
                 });
             }
 

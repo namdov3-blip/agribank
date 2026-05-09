@@ -1,6 +1,7 @@
 import { VercelRequest, VercelResponse } from '@vercel/node';
 import settingsInterest from '../backend/handlers/settings/interest-rate';
 import settingsBankInterest from '../backend/handlers/settings/bank-interest-rate';
+import editingAllowed from '../backend/handlers/settings/editing-allowed';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
     const { url } = req;
@@ -8,6 +9,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     if (path.endsWith('/interest-rate')) return await settingsInterest(req, res);
     if (path.endsWith('/bank-interest-rate')) return await settingsBankInterest(req, res);
+    if (path.endsWith('/editing-allowed')) return await editingAllowed(req, res);
 
     return res.status(404).json({ error: 'Settings route not found' });
 }

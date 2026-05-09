@@ -1,7 +1,8 @@
 import { VercelRequest, VercelResponse } from '@vercel/node';
 import connectDB from '../../../lib/mongodb';
-import { Project, Transaction, BankTransaction, AuditLog } from '../../../lib/models';
+import { Project, Transaction, BankTransaction, AuditLog, User } from '../../../lib/models';
 import { authMiddleware } from '../../../lib/auth';
+import { assertStaffMayMutate } from '../../../lib/mutation-policy';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
     res.setHeader('Access-Control-Allow-Origin', '*');
@@ -38,6 +39,22 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 return res.status(404).json({ error: 'Không tìm thấy dự án' });
             }
 
+            const currentUser = await (User as any).findById(payload.userId).select('organization');
+            if (!currentUser) {
+                return res.status(401).json({ error: 'User not found' });
+            }
+            const roleKey = (payload.role ?? '').trim().replace(/\s+/g, '').toLowerCase();
+            const skipOrgNarrow =
+                roleKey === 'superadmin' ||
+                roleKey === 'admin' ||
+                currentUser.organization === 'Nam World';
+            const orgOk =
+                skipOrgNarrow ||
+                (!!currentUser.organization && project.organization === currentUser.organization);
+            if (!orgOk) {
+                return res.status(403).json({ error: 'Không có quyền xem dự án này' });
+            }
+
             // Get related transactions
             const transactions = await (Transaction as any).find({ projectId: id });
 
@@ -64,6 +81,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
         // PUT - Update project
         if (req.method === 'PUT') {
+            if (!(await assertStaffMayMutate(payload, res))) return;
+
             const { code, name, location, totalBudget, interestStartDate, status } = req.body;
 
             const project = await (Project as any).findByIdAndUpdate(
@@ -118,6 +137,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
         // DELETE - Delete project
         if (req.method === 'DELETE') {
+            if (!(await assertStaffMayMutate(payload, res))) return;
+
             const project = await (Project as any).findById(id);
             if (!project) {
                 return res.status(404).json({ error: 'Không tìm thấy dự án' });
