@@ -8,6 +8,22 @@ export function isElevatedWorkspaceRole(role: User['role'] | string | undefined)
     return key === 'superadmin' || key === 'admin' || key === 'chiefaccountant';
 }
 
+/**
+ * SuperAdmin / Admin: mặc định thấy mọi tab trên sidebar.
+ * Kế toán trưởng không áp dụng — phải bật từng tab trong «Phân quyền truy cập tab» (gồm cả Admin nếu cần).
+ */
+export function isSuperAdminOrAdminRole(role: User['role'] | string | undefined): boolean {
+    if (!role || typeof role !== 'string') return false;
+    const key = role.trim().replace(/\s+/g, '').toLowerCase();
+    return key === 'superadmin' || key === 'admin';
+}
+
+/** Vào màn Admin (sidebar + route): SuperAdmin/Admin luôn được; role khác cần quyền `admin` trong permissions. */
+export function userCanAccessAdminWorkspaceTab(user: Pick<User, 'role' | 'permissions'>): boolean {
+    if (isSuperAdminOrAdminRole(user.role)) return true;
+    return user.permissions?.some((p) => String(p).trim().toLowerCase() === 'admin') ?? false;
+}
+
 /** Role nâng cao hoặc có quyền tab Admin — không chịu khóa “Don’t Allow” trên UI/API ghi (đồng bộ mutation-policy) */
 export function isStaffEditingPolicyExempt(
     role: User['role'] | string | undefined,

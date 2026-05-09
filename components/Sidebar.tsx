@@ -2,7 +2,7 @@
 import React, { useState } from 'react';
 import { LayoutDashboard, FolderKanban, Users, LogOut, ShieldCheck, Landmark, Calculator } from 'lucide-react';
 import { User } from '../types';
-import { isElevatedWorkspaceRole, isStaffEditingPolicyExempt } from '../utils/helpers';
+import { isSuperAdminOrAdminRole, isStaffEditingPolicyExempt } from '../utils/helpers';
 
 interface SidebarProps {
   activeTab: string;
@@ -33,8 +33,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   // Filter menu items based on user permissions
   const availableItems = menuItems.filter(item => {
-    // Đồng bộ với policy backend + helpers: role có thể lệch hoa/thường
-    if (isElevatedWorkspaceRole(currentUser.role)) return true;
+    // Chỉ SuperAdmin / Admin thấy mọi tab; Kế toán trưởng theo checklist permissions (kể cả tab Admin).
+    if (isSuperAdminOrAdminRole(currentUser.role)) return true;
     // Tài khoản có quyền tab Admin nhưng role chưa cập nhật vẫn cần vào Dự án để duyệt template
     if (currentUser.permissions?.some((p) => String(p).trim().toLowerCase() === 'admin')) return true;
     // Allow interestCalc if user có quyền giao dịch hoặc số dư

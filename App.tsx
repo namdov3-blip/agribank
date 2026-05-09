@@ -25,7 +25,12 @@ import {
   BankTransaction,
   BankTransactionType
 } from './types';
-import { calculateInterest, formatCurrency, isStaffEditingPolicyExempt } from './utils/helpers';
+import {
+  calculateInterest,
+  formatCurrency,
+  isStaffEditingPolicyExempt,
+  userCanAccessAdminWorkspaceTab
+} from './utils/helpers';
 
 // --- SESSION SETTINGS ---
 const IDLE_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes idle => auto logout
@@ -94,10 +99,7 @@ const App: React.FC = () => {
   }, [projects, transactions, currentUser]);
 
   const mayFetchAdminBundles = useCallback((viewer?: User | null) => {
-    return !!(
-      viewer &&
-      isStaffEditingPolicyExempt(viewer.role, viewer.permissions)
-    );
+    return !!(viewer && userCanAccessAdminWorkspaceTab(viewer));
   }, []);
 
   // Load all data from API (chỉ gọi /users + /audit-logs khi có quyền Admin — tránh 403 và log console)
@@ -513,6 +515,13 @@ const App: React.FC = () => {
           onDelete={loadAllData}
         />;
       case 'admin':
+        if (!userCanAccessAdminWorkspaceTab(currentUser!)) {
+          return (
+            <div className="max-w-lg mx-auto py-16 text-center text-slate-600 font-medium">
+              Bạn không có quyền truy cập tab Admin. Liên hệ quản trị viên để được cấp quyền «Admin» trong phân quyền tab.
+            </div>
+          );
+        }
         return <Admin
           auditLogs={auditLogs}
           users={users}
