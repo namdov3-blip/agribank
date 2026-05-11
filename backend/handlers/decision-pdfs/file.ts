@@ -3,6 +3,32 @@ import connectDB from '../../../lib/mongodb';
 import { DecisionPdfScan, User } from '../../../lib/models';
 import { authMiddleware } from '../../../lib/auth';
 
+/** MongoDB/Mongoose có thể trả Buffer dưới dạng BSON Binary, Uint8Array hoặc { type:'Buffer', data }. */
+function toPdfNodeBuffer(raw: unknown): Buffer {
+    if (raw == null) return Buffer.alloc(0);
+    if (Buffer.isBuffer(raw)) return raw;
+    if (raw instanceof Uint8Array) return Buffer.from(raw);
+    if (typeof raw === 'object') {
+        const o = raw as Record<string, unknown>;
+        if (o.type === 'Buffer' && Array.isArray(o.data)) {
+            return Buffer.from(o.data as number[]);
+        }
+        if (o._bsontype === 'Binary' || o.sub_type !== undefined) {
+            const bin = raw as { buffer?: Buffer | Uint8Array; value?: () => Uint8Array };
+            if (Buffer.isBuffer(bin.buffer)) return Buffer.from(bin.buffer);
+            if (bin.buffer instanceof Uint8Array) return Buffer.from(bin.buffer);
+            if (typeof bin.value === 'function') {
+                try {
+                    return Buffer.from(bin.value());
+                } catch {
+                    /* fall through */
+                }
+            }
+        }
+    }
+    return Buffer.alloc(0);
+}
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
@@ -27,15 +53,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const skipOrgNarrow =
             roleKey === 'superadmin' || roleKey === 'admin' || currentUser.organization === 'Nam World';
 
-        const doc = await (DecisionPdfScan as any).findById(id).select('organization originalFileName pdfBuffer').lean();
+        // Không dùng .lean(): lean hay trả pdfBuffer dạng BSON Binary — Buffer.from() sẽ làm hỏng file PDF.
+        const doc = await (DecisionPdfScan as any).findById(id).select('organization originalFileName pdfBuffer').exec();
         if (!doc) return res.status(404).json({ error: 'Không tìm thấy file' });
 
         if (!skipOrgNarrow && currentUser.organization && doc.organization !== currentUser.organization) {
             return res.status(403).json({ error: 'Không có quyền tải file này' });
         }
 
-        const raw = doc.pdfBuffer;
-        const pdfBuf = Buffer.isBuffer(raw) ? raw : Buffer.from(raw as ArrayBuffer);
+        const pdfBuf = toPdfNodeBuffer(doc.pdfBuffer);
+        if (pdfBuf.length < 5 || pdfBuf.subarray(0, 4).toString('ascii') !== '%PDF') {
+            console.error('decision-pdfs file: invalid PDF magic', { id, len: pdfBuf.length });
+            return res.status(500).json({ error: 'Dữ liệu PDF trên máy chủ không hợp lệ' });
+        }
 
         const filename = encodeURIComponent(doc.originalFileName || 'quyet-dinh.pdf').replace(/'/g, '%27');
         res.setHeader('Content-Type', 'application/pdf');

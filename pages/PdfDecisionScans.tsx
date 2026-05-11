@@ -40,9 +40,14 @@ async function openPdfWithAuth(id: string): Promise<void> {
     }
     throw new Error(msg);
   }
-  const blob = await res.blob();
+  const ab = await res.arrayBuffer();
+  const blob = new Blob([ab], { type: 'application/pdf' });
   const url = URL.createObjectURL(blob);
-  window.open(url, '_blank', 'noopener,noreferrer');
+  const w = window.open(url, '_blank', 'noopener,noreferrer');
+  if (!w) {
+    URL.revokeObjectURL(url);
+    throw new Error('Trình duyệt đã chặn cửa sổ mới — hãy cho phép popup hoặc thử lại.');
+  }
   window.setTimeout(() => URL.revokeObjectURL(url), 120_000);
 }
 
