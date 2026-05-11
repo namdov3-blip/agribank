@@ -110,6 +110,8 @@ export interface Project {
   interestStartDate?: string;
   status: 'Active' | 'Completed' | 'Planning';
   templateApproved?: boolean;
+  /** Khi true: không được sửa/xóa/đổi trạng thái giao dịch thuộc dự án (KTT/Admin bật tắt). */
+  transactionsLocked?: boolean;
 }
 
 export interface User {

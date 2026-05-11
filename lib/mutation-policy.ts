@@ -13,6 +13,47 @@ export function isElevatedRole(role: string): boolean {
     return key === 'superadmin' || key === 'admin' || key === 'chiefaccountant';
 }
 
+/** Dự án đang khóa — không cho sửa/xóa/đổi trạng thái giao dịch (mọi vai trò). */
+export function isProjectTransactionsLocked(project: { transactionsLocked?: boolean } | null | undefined): boolean {
+    return project?.transactionsLocked === true;
+}
+
+/**
+ * Chặn ghi nếu dự án đang khóa giao dịch. Dùng sau assertStaffMayMutate trên các API giao dịch.
+ */
+export async function assertProjectTransactionsUnlockedForWrite(
+    projectId: string | { toString?: () => string } | null | undefined,
+    res: VercelResponse
+): Promise<boolean> {
+    if (projectId == null || projectId === '') {
+        res.status(400).json({ error: 'Thiếu dự án liên quan' });
+        return false;
+    }
+    const idStr =
+        typeof projectId === 'string'
+            ? projectId
+            : typeof (projectId as { toString?: () => string }).toString === 'function'
+              ? (projectId as { toString: () => string }).toString()
+              : '';
+    if (!idStr) {
+        res.status(400).json({ error: 'Thiếu dự án liên quan' });
+        return false;
+    }
+    await connectDB();
+    const project = await (Project as any).findById(idStr).select('transactionsLocked code').lean();
+    if (!project) {
+        res.status(404).json({ error: 'Không tìm thấy dự án' });
+        return false;
+    }
+    if (isProjectTransactionsLocked(project)) {
+        res.status(403).json({
+            error: `Dự án "${(project as { code?: string }).code || idStr}" đang khóa chỉnh sửa giao dịch. Liên hệ Kế toán trưởng / Admin để mở khóa.`
+        });
+        return false;
+    }
+    return true;
+}
+
 /** undefined / missing trong DB được coi là true (backward compatible) */
 export function isEditingAllowedFlag(value: unknown): boolean {
     return value !== false;

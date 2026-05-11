@@ -1,6 +1,7 @@
 import { VercelRequest, VercelResponse } from '@vercel/node';
 import connectDB from '../../../lib/mongodb';
 import { Transaction, Project, Settings } from '../../../lib/models';
+import { isProjectTransactionsLocked } from '../../../lib/mutation-policy';
 import { generateQRToken } from '../../../lib/auth';
 import QRCode from 'qrcode';
 import { toZonedTime } from 'date-fns-tz';
@@ -50,6 +51,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }
 
         const project = await (Project as any).findById(transaction.projectId);
+        if (isProjectTransactionsLocked(project)) {
+            return res.status(403).json({ error: 'Dự án đang khóa chỉnh sửa giao dịch — không tạo QR giải ngân.' });
+        }
         const settings = await (Settings as any).findOne({ key: 'global' }) || { interestRate: 6.5 };
         const interestRate = settings.interestRate;
         const hasRateChange = settings.interestRateChangeDate &&

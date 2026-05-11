@@ -2,7 +2,7 @@ import { VercelRequest, VercelResponse } from '@vercel/node';
 import connectDB from '../../../lib/mongodb';
 import { Transaction, BankTransaction, AuditLog, Project, Settings } from '../../../lib/models';
 import { authMiddleware } from '../../../lib/auth';
-import { assertStaffMayMutate } from '../../../lib/mutation-policy';
+import { assertStaffMayMutate, assertProjectTransactionsUnlockedForWrite } from '../../../lib/mutation-policy';
 import { calculateInterest, getVNStartOfDay } from '../../../lib/utils/interest';
 import { fromVNTime } from '../../../utils/helpers';
 import { format as formatTz } from 'date-fns-tz';
@@ -49,6 +49,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         if (!transaction) {
             return res.status(404).json({ error: 'Không tìm thấy giao dịch' });
         }
+
+        if (!(await assertProjectTransactionsUnlockedForWrite(transaction.projectId, res))) return;
 
         const project = await (Project as any).findById(transaction.projectId);
         const org = project?.organization;

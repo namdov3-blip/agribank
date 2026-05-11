@@ -2,7 +2,7 @@ import { VercelRequest, VercelResponse } from '@vercel/node';
 import connectDB from '../../../lib/mongodb';
 import { Project, Transaction, BankTransaction, AuditLog, User } from '../../../lib/models';
 import { authMiddleware } from '../../../lib/auth';
-import { assertStaffMayMutate } from '../../../lib/mutation-policy';
+import { assertStaffMayMutate, isProjectTransactionsLocked } from '../../../lib/mutation-policy';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
     res.setHeader('Access-Control-Allow-Origin', '*');
@@ -84,6 +84,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             if (!(await assertStaffMayMutate(payload, res))) return;
 
             const { code, name, location, totalBudget, interestStartDate, status } = req.body;
+
+            if (interestStartDate) {
+                const projCheck = await (Project as any).findById(id).select('transactionsLocked code');
+                if (projCheck && isProjectTransactionsLocked(projCheck)) {
+                    return res.status(403).json({
+                        error: 'Dự án đang khóa giao dịch — không đổi ngày tính lãi chung (ảnh hưởng toàn bộ hồ sơ). Hãy mở khóa trước.'
+                    });
+                }
+            }
 
             const project = await (Project as any).findByIdAndUpdate(
                 id,

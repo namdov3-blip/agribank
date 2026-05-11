@@ -69,11 +69,21 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
 
   if (!transaction) return null;
 
+  const projectTransactionsLocked = project?.transactionsLocked === true;
+
   const blockIfReadOnly = (): boolean => {
-    if (!readOnlyStaff) return false;
-    alert('Hệ thống đang khóa chỉnh sửa đối với tài khoản của bạn. Liên hệ Kế toán trưởng hoặc Admin.');
-    return true;
+    if (readOnlyStaff) {
+      alert('Hệ thống đang khóa chỉnh sửa đối với tài khoản của bạn. Liên hệ Kế toán trưởng hoặc Admin.');
+      return true;
+    }
+    if (projectTransactionsLocked) {
+      alert('Dự án này đang khóa chỉnh sửa giao dịch. Liên hệ Kế toán trưởng / Admin để mở khóa.');
+      return true;
+    }
+    return false;
   };
+
+  const effectiveReadOnly = readOnlyStaff || projectTransactionsLocked;
 
   // Initialize edited transaction
   React.useEffect(() => {
@@ -663,9 +673,22 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
       {/* --- WEB UI --- */}
       <GlassCard className="w-full max-w-4xl max-h-[90vh] overflow-hidden flex flex-col relative bg-white/95 border-slate-300 shadow-2xl ring-1 ring-black/5 no-print">
 
-        {readOnlyStaff && (
-          <div className="px-4 py-2 bg-amber-50 border-b border-amber-200 text-xs font-bold text-amber-900 text-center">
-            Chỉ xem — Admin / Kế toán trưởng đã khóa chỉnh sửa đối với user thường.
+        {(readOnlyStaff || projectTransactionsLocked) && (
+          <div
+            className={`px-4 py-2 border-b text-xs font-bold text-center ${
+              projectTransactionsLocked
+                ? 'bg-rose-50 border-rose-200 text-rose-900'
+                : 'bg-amber-50 border-amber-200 text-amber-900'
+            }`}
+          >
+            {readOnlyStaff && (
+              <span className="block">Chỉ xem — Admin / Kế toán trưởng đã khóa chỉnh sửa đối với tài khoản của bạn.</span>
+            )}
+            {projectTransactionsLocked && (
+              <span className="block mt-1">
+                Dự án đang khóa giao dịch — không chỉnh sửa / giải ngân / rút / bổ sung cho đến khi Kế toán trưởng hoặc Admin mở khóa dự án.
+              </span>
+            )}
           </div>
         )}
 
@@ -816,8 +839,9 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
               <div className="rounded-xl bg-blue-50 border border-blue-300 overflow-hidden">
                 <button
                   type="button"
+                  disabled={effectiveReadOnly}
                   onClick={() => setIsSupplementaryOpen(v => !v)}
-                  className="w-full px-4 py-3 flex items-center justify-between hover:bg-blue-100/60 transition-colors"
+                  className="w-full px-4 py-3 flex items-center justify-between hover:bg-blue-100/60 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                 >
                   <div className="flex items-center gap-2">
                     <Plus size={12} className="text-blue-700" />
@@ -878,7 +902,12 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
                     />
                     <button
                       onClick={handleSaveSupplementary}
-                      disabled={isSavingSupplementary || parseNumberFromComma(supplementaryAmountInput) <= 0 || !supplementaryDateInput}
+                      disabled={
+                        effectiveReadOnly ||
+                        isSavingSupplementary ||
+                        parseNumberFromComma(supplementaryAmountInput) <= 0 ||
+                        !supplementaryDateInput
+                      }
                       className="w-full py-2 bg-blue-600 text-white rounded-lg text-xs font-bold hover:bg-blue-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                     >
                       {isSavingSupplementary ? (
@@ -916,8 +945,9 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
                 <div className="rounded-xl bg-blue-50 border border-blue-300 overflow-hidden">
                   <button
                     type="button"
+                    disabled={effectiveReadOnly}
                     onClick={() => setIsWithdrawOpen(v => !v)}
-                    className="w-full px-4 py-3 flex items-center justify-between hover:bg-blue-100/60 transition-colors"
+                    className="w-full px-4 py-3 flex items-center justify-between hover:bg-blue-100/60 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                   >
                     <div className="flex items-center gap-2">
                       <ArrowDownCircle size={12} className="text-blue-700" />
@@ -973,7 +1003,7 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
                             await handleWithdraw();
                             setIsWithdrawOpen(false);
                           }}
-                          disabled={isWithdrawing || !withdrawAmountInput}
+                          disabled={effectiveReadOnly || isWithdrawing || !withdrawAmountInput}
                           className="flex-1 py-2 bg-blue-600 text-white rounded-lg text-xs font-bold hover:bg-blue-700 transition-all flex items-center justify-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                           {isWithdrawing ? (
@@ -1012,8 +1042,10 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
                 </h3>
                 {!isEditingDetails ? (
                   <button
+                    type="button"
+                    disabled={effectiveReadOnly}
                     onClick={() => setIsEditingDetails(true)}
-                    className="ml-4 px-3 py-1.5 bg-slate-100 text-slate-700 rounded-lg text-xs font-bold hover:bg-slate-200 transition-all flex items-center gap-1 border border-slate-200"
+                    className="ml-4 px-3 py-1.5 bg-slate-100 text-slate-700 rounded-lg text-xs font-bold hover:bg-slate-200 transition-all flex items-center gap-1 border border-slate-200 disabled:opacity-40 disabled:cursor-not-allowed"
                   >
                     <Edit2 size={12} />
                     Chỉnh sửa
@@ -1021,6 +1053,7 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
                 ) : (
                   <div className="ml-4 flex gap-2">
                     <button
+                      type="button"
                       onClick={() => {
                         setIsEditingDetails(false);
                         setEditedTransaction(transaction ? { ...transaction } : null);
@@ -1030,8 +1063,10 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
                       Hủy
                     </button>
                     <button
+                      type="button"
+                      disabled={effectiveReadOnly}
                       onClick={handleSaveDetails}
-                      className="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-xs font-bold hover:bg-blue-700 transition-all flex items-center gap-1"
+                      className="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-xs font-bold hover:bg-blue-700 transition-all flex items-center gap-1 disabled:opacity-40 disabled:cursor-not-allowed"
                     >
                       <Save size={12} />
                       Lưu
@@ -1181,8 +1216,10 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
               {!isDisbursed ? (
                 <>
                   <button
+                    type="button"
+                    disabled={effectiveReadOnly}
                     onClick={handleConfirmPayment}
-                    className="w-full py-3.5 bg-slate-900 text-white rounded-xl text-sm font-bold hover:bg-black transition-all shadow-lg hover:shadow-xl hover:-translate-y-0.5 flex items-center justify-center gap-2 group border border-transparent"
+                    className="w-full py-3.5 bg-slate-900 text-white rounded-xl text-sm font-bold hover:bg-black transition-all shadow-lg hover:shadow-xl hover:-translate-y-0.5 flex items-center justify-center gap-2 group border border-transparent disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:translate-y-0"
                   >
                     <Wallet size={18} className="text-blue-400 group-hover:text-blue-300 transition-colors" />
                     Xác nhận chi trả
@@ -1210,7 +1247,7 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
                       <div className="flex gap-2 pt-1">
                         <button
                           onClick={handleConfirmPaymentDate}
-                          disabled={isSavingPaymentDate || !paymentDateInput}
+                          disabled={effectiveReadOnly || isSavingPaymentDate || !paymentDateInput}
                           className="flex-1 py-2 bg-blue-600 text-white rounded-lg text-xs font-bold hover:bg-blue-700 transition-all flex items-center justify-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                           {isSavingPaymentDate ? (
@@ -1251,8 +1288,10 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
                     </div>
                   ) : (
                     <button
+                      type="button"
+                      disabled={effectiveReadOnly}
                       onClick={() => setShowPaymentDatePicker(true)}
-                      className="w-full py-2.5 bg-blue-50 text-blue-700 rounded-xl text-xs font-bold hover:bg-blue-100 transition-all border border-blue-200 shadow-sm flex items-center justify-center gap-2"
+                      className="w-full py-2.5 bg-blue-50 text-blue-700 rounded-xl text-xs font-bold hover:bg-blue-100 transition-all border border-blue-200 shadow-sm flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
                     >
                       <Calendar size={14} />
                       {transaction.disbursementDate 
@@ -1279,12 +1318,14 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
                       {/* Nút nạp tiền chỉ hiện khi đang ở trạng thái đã giải ngân */}
                       {!showRefundForm ? (
                         <button
+                          type="button"
+                          disabled={effectiveReadOnly}
                           onClick={() => {
                             // Set default amount to totalAmount
                             setRefundAmountInput(formatNumberWithComma(roundHalfUp(totalAmount, 0)));
                             setShowRefundForm(true);
                           }}
-                          className="w-full py-2.5 bg-amber-50 text-amber-700 rounded-xl text-xs font-bold flex items-center justify-center gap-2 hover:bg-amber-100 transition-all border border-amber-200 shadow-sm"
+                          className="w-full py-2.5 bg-amber-50 text-amber-700 rounded-xl text-xs font-bold flex items-center justify-center gap-2 hover:bg-amber-100 transition-all border border-amber-200 shadow-sm disabled:opacity-40 disabled:cursor-not-allowed"
                         >
                           <Undo2 size={14} />
                           Nạp tiền / Hoàn quỹ
@@ -1324,7 +1365,7 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
                           <div className="flex gap-2">
                             <button
                               onClick={handleRefundMoney}
-                              disabled={isRefunding || !refundAmountInput || !refundDateInput}
+                              disabled={effectiveReadOnly || isRefunding || !refundAmountInput || !refundDateInput}
                               className="flex-1 py-2 bg-amber-600 text-white rounded-lg text-xs font-bold hover:bg-amber-700 transition-all flex items-center justify-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed"
                             >
                               {isRefunding ? (
@@ -1355,8 +1396,10 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
                   ) : (
                     // Sau khi nạp tiền, trạng thái sẽ là HOLD và nút nạp tiền/hoàn quỹ biến mất, hiển thị nút xác nhận lại
                     <button
+                      type="button"
+                      disabled={effectiveReadOnly}
                       onClick={handleConfirmPayment}
-                      className="w-full py-3.5 bg-blue-600 text-white rounded-xl text-sm font-bold flex items-center justify-center gap-2 shadow-sm border border-blue-700"
+                      className="w-full py-3.5 bg-blue-600 text-white rounded-xl text-sm font-bold flex items-center justify-center gap-2 shadow-sm border border-blue-700 disabled:opacity-40 disabled:cursor-not-allowed"
                     >
                       <CheckCircle size={18} />
                       Xác nhận giải ngân

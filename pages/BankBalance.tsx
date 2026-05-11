@@ -19,10 +19,13 @@ import {
   formatNumberWithComma,
   parseNumberFromComma,
   roundTo2,
-  exportBalanceProjectDetailToExcel
+  exportBalanceProjectDetailToExcel,
+  toVNTime,
+  getVNStartOfDay,
+  getVNEndOfDay
 } from '../utils/helpers';
 import {
-  Wallet, History, X, Table2, ChevronLeft, ChevronRight, Download
+  Wallet, History, X, Table2, ChevronLeft, ChevronRight, Download, Search
 } from 'lucide-react';
 
 interface BankBalanceProps {
@@ -59,6 +62,43 @@ function resolveProject(projects: Project[], pidStr: string): Project | undefine
   return projects.find((p) => String(p.id) === pidStr || String((p as { _id?: string })._id) === pidStr);
 }
 
+/** Giao dịch có ít nhất một mốc ngày liên quan nằm trong [start, end] (VN). Giải ngân: theo ngày GN; còn lại: quyết định / lãi / lịch sử rút. */
+function transactionInBalanceDetailDateRange(t: Transaction, start: Date, end: Date): boolean {
+  const inR = (d: Date) => !isNaN(d.getTime()) && d >= start && d <= end;
+  if (t.status === TransactionStatus.DISBURSED) {
+    if (t.disbursementDate) return inR(toVNTime(t.disbursementDate));
+  }
+  const cand: Date[] = [];
+  if (t.household?.decisionDate) cand.push(toVNTime(t.household.decisionDate));
+  if (t.effectiveInterestDate) cand.push(toVNTime(t.effectiveInterestDate));
+  for (const log of t.history ?? []) {
+    const a = String(log.action || '');
+    if (log.timestamp && (a.includes('Rút') || a.includes('Giải ngân'))) {
+      cand.push(toVNTime(log.timestamp));
+    }
+  }
+  return cand.some(inR);
+}
+
+/** Ngày rút một phần gần nhất (lịch sử); fallback effectiveInterestDate nếu có withdrawnAmount. */
+function getLatestPartialWithdrawTimestamp(t: Transaction): string | null {
+  const hist = t.history ?? [];
+  let best: string | null = null;
+  for (const log of hist) {
+    const a = String(log.action || '');
+    if (a.includes('một phần') && log.timestamp) {
+      const ts = log.timestamp;
+      if (!best || new Date(ts) > new Date(best)) best = ts;
+    }
+  }
+  if (best) return best;
+  const w = (t as unknown as { withdrawnAmount?: number }).withdrawnAmount;
+  if (w && t.effectiveInterestDate) return t.effectiveInterestDate;
+  return null;
+}
+
+type BalanceDetailDateRange = { start: Date; end: Date };
+
 /** Dòng NH có gắn `projectId` (chuỗi không rỗng hoặc object id). Dùng khi phân biệt giao dịch gắn dự án và dòng thuần “quỹ / phí”. */
 function bankTransactionHasProject(bt: BankTransaction): boolean {
   const raw = bt.projectId;
@@ -74,7 +114,8 @@ function sumDisbursedForProjectTransactions(
   interestRate: number,
   interestRateChangeDate?: string | null,
   interestRateBefore?: number | null,
-  interestRateAfter?: number | null
+  interestRateAfter?: number | null,
+  detailRange?: BalanceDetailDateRange | null
 ): number {
   const hasRateChange = !!(interestRateChangeDate && interestRateBefore !== null && interestRateAfter !== null);
   const interestTo = (principal: number, baseDate: string | undefined, end: Date) =>
@@ -91,8 +132,23 @@ function sumDisbursedForProjectTransactions(
 
   const interestStartFallback = project?.interestStartDate || (project as { startDate?: string })?.startDate;
 
+  const disbursementInRange = (tx: Transaction) => {
+    if (!detailRange || !tx.disbursementDate) return true;
+    const d = toVNTime(tx.disbursementDate);
+    return d >= detailRange.start && d <= detailRange.end;
+  };
+
+  const partialWithdrawInRange = (tx: Transaction) => {
+    if (!detailRange) return true;
+    const ts = getLatestPartialWithdrawTimestamp(tx);
+    if (!ts) return false;
+    const d = toVNTime(ts);
+    return d >= detailRange.start && d <= detailRange.end;
+  };
+
   const disbursedFull = projectTrans
     .filter((tx) => tx.status === TransactionStatus.DISBURSED)
+    .filter((tx) => disbursementInRange(tx))
     .reduce((acc, t) => {
       const supplementary = t.supplementaryAmount || 0;
       const baseDate = t.effectiveInterestDate || interestStartFallback;
@@ -112,6 +168,7 @@ function sumDisbursedForProjectTransactions(
 
   const disbursedPartial = projectTrans
     .filter((tx) => tx.status !== TransactionStatus.DISBURSED && (tx as unknown as { withdrawnAmount?: number }).withdrawnAmount)
+    .filter((tx) => partialWithdrawInRange(tx))
     .reduce((acc, t) => acc + (((t as unknown as { withdrawnAmount?: number }).withdrawnAmount) || 0), 0);
 
   return roundTo2(disbursedFull + disbursedPartial);
@@ -124,9 +181,11 @@ function sumInterestUndisbursedForProject(
   interestRate: number,
   interestRateChangeDate?: string | null,
   interestRateBefore?: number | null,
-  interestRateAfter?: number | null
+  interestRateAfter?: number | null,
+  interestAsOf?: Date
 ): number {
   const hasRateChange = !!(interestRateChangeDate && interestRateBefore !== null && interestRateAfter !== null);
+  const endDate = interestAsOf ?? new Date();
   let sum = 0;
   for (const t of projectTrans) {
     if (t.status === TransactionStatus.DISBURSED) continue;
@@ -138,14 +197,14 @@ function sumInterestUndisbursedForProject(
       const interestResult = calculateInterestWithRateChange(
         principalBase,
         baseDate,
-        new Date(),
+        endDate,
         interestRateChangeDate!,
         interestRateBefore!,
         interestRateAfter!
       );
       tInterest = interestResult.totalInterest;
     } else {
-      tInterest = calculateInterest(principalBase, interestRate, baseDate, new Date());
+      tInterest = calculateInterest(principalBase, interestRate, baseDate, endDate);
     }
     sum += tInterest;
   }
@@ -214,6 +273,9 @@ export const BankBalance: React.FC<BankBalanceProps> = ({
   const [isTxModalOpen, setIsTxModalOpen] = useState(false);
   const [isBalanceDetailModalOpen, setIsBalanceDetailModalOpen] = useState(false);
   const [detailModalPage, setDetailModalPage] = useState(1);
+  const [detailDateFrom, setDetailDateFrom] = useState('');
+  const [detailDateTo, setDetailDateTo] = useState('');
+  const [detailProjectSearch, setDetailProjectSearch] = useState('');
 
   const [txType, setTxType] = useState<BankTransactionType>(BankTransactionType.DEPOSIT);
   const [txAmount, setTxAmount] = useState('');
@@ -303,6 +365,20 @@ export const BankBalance: React.FC<BankBalanceProps> = ({
     };
   }, [transactions, projects, interestRate, interestRateChangeDate, interestRateBefore, interestRateAfter, bankAccount.currentBalance]);
 
+  const { detailDateRange, detailDateRangeInvalid } = useMemo(() => {
+    const f = detailDateFrom.trim();
+    const t = detailDateTo.trim();
+    if (!f || !t) {
+      return { detailDateRange: null as BalanceDetailDateRange | null, detailDateRangeInvalid: false };
+    }
+    const start = getVNStartOfDay(`${f}T00:00:00+07:00`);
+    const end = getVNEndOfDay(`${t}T23:59:59+07:00`);
+    if (start > end) {
+      return { detailDateRange: null as BalanceDetailDateRange | null, detailDateRangeInvalid: true };
+    }
+    return { detailDateRange: { start, end } as BalanceDetailDateRange, detailDateRangeInvalid: false };
+  }, [detailDateFrom, detailDateTo]);
+
   /** Chi tiết dự án: Còn lại = Phê duyệt − Đã GN + Lãi tạm + Lãi đã chốt */
   const balanceDetailByProject = useMemo(() => {
     const txsByPid = new Map<string, Transaction[]>();
@@ -313,56 +389,76 @@ export const BankBalance: React.FC<BankBalanceProps> = ({
       txsByPid.get(pid)!.push(t);
     }
 
-    const rows = [...txsByPid.entries()].map(([projectId, projectTrans]) => {
-      const project = resolveProject(projects, projectId);
-      const code = project?.code ?? projectId.slice(-8);
-      const name = project?.name ?? '—';
-      const householdCount = projectTrans.length;
-      const householdNotReceived = projectTrans.filter((t) => t.status !== TransactionStatus.DISBURSED).length;
+    const range = detailDateRange;
+    const interestAsOf = range
+      ? (() => {
+          const cap = new Date();
+          return range.end > cap ? cap : range.end;
+        })()
+      : undefined;
 
-      const sumApprovedFromTx = projectTrans.reduce((s, t) => s + (t.compensation?.totalApproved ?? 0), 0);
-      const totalPheDuyet =
-        project && project.totalBudget > 0 ? roundTo2(project.totalBudget) : roundTo2(sumApprovedFromTx);
+    const rows = [...txsByPid.entries()]
+      .map(([projectId, projectTransAll]) => {
+        const projectTrans = range
+          ? projectTransAll.filter((t) => transactionInBalanceDetailDateRange(t, range.start, range.end))
+          : projectTransAll;
 
-      const disbursedTotal = sumDisbursedForProjectTransactions(
-        project,
-        projectTrans,
-        interestRate,
-        interestRateChangeDate,
-        interestRateBefore,
-        interestRateAfter
-      );
-      const interest = sumInterestUndisbursedForProject(
-        project,
-        projectTrans,
-        interestRate,
-        interestRateChangeDate,
-        interestRateBefore,
-        interestRateAfter
-      );
-      const interestLocked = sumLockedInterestForProject(
-        project,
-        projectTrans,
-        interestRate,
-        interestRateChangeDate,
-        interestRateBefore,
-        interestRateAfter
-      );
-      const remaining = roundTo2(totalPheDuyet - disbursedTotal + interest + interestLocked);
+        if (range && projectTrans.length === 0) return null;
 
-      return {
-        projectId,
-        code,
-        name,
-        householdCount,
-        householdNotReceived,
-        totalPheDuyet,
-        disbursedTotal,
-        interest,
-        interestLocked,
-        remaining
-      };
-    });
+        const project = resolveProject(projects, projectId);
+        const code = project?.code ?? projectId.slice(-8);
+        const name = project?.name ?? '—';
+        const householdCount = projectTrans.length;
+        const householdNotReceived = projectTrans.filter((t) => t.status !== TransactionStatus.DISBURSED).length;
+
+        const sumApprovedFromTx = projectTrans.reduce((s, t) => s + (t.compensation?.totalApproved ?? 0), 0);
+        const totalPheDuyet =
+          !range && project && project.totalBudget > 0
+            ? roundTo2(project.totalBudget)
+            : roundTo2(sumApprovedFromTx);
+
+        const disbursedTotal = sumDisbursedForProjectTransactions(
+          project,
+          projectTrans,
+          interestRate,
+          interestRateChangeDate,
+          interestRateBefore,
+          interestRateAfter,
+          range
+        );
+        const interest = sumInterestUndisbursedForProject(
+          project,
+          projectTrans,
+          interestRate,
+          interestRateChangeDate,
+          interestRateBefore,
+          interestRateAfter,
+          interestAsOf
+        );
+        const interestLocked = sumLockedInterestForProject(
+          project,
+          projectTrans,
+          interestRate,
+          interestRateChangeDate,
+          interestRateBefore,
+          interestRateAfter
+        );
+        const remaining = roundTo2(totalPheDuyet - disbursedTotal + interest + interestLocked);
+
+        return {
+          projectId,
+          code,
+          name,
+          householdCount,
+          householdNotReceived,
+          totalPheDuyet,
+          disbursedTotal,
+          interest,
+          interestLocked,
+          remaining
+        };
+      })
+      .filter((r): r is NonNullable<typeof r> => r !== null);
 
     return rows
       .sort((a, b) =>
@@ -379,16 +475,32 @@ export const BankBalance: React.FC<BankBalanceProps> = ({
             Math.abs(r.interest) >= 0.005 ||
             Math.abs(r.interestLocked) >= 0.005)
       );
-  }, [transactions, projects, interestRate, interestRateChangeDate, interestRateBefore, interestRateAfter]);
+  }, [
+    transactions,
+    projects,
+    interestRate,
+    interestRateChangeDate,
+    interestRateBefore,
+    interestRateAfter,
+    detailDateRange
+  ]);
+
+  const balanceDetailVisible = useMemo(() => {
+    const q = detailProjectSearch.trim().toLowerCase();
+    if (!q) return balanceDetailByProject;
+    return balanceDetailByProject.filter(
+      (r) => r.code.toLowerCase().includes(q) || r.name.toLowerCase().includes(q)
+    );
+  }, [balanceDetailByProject, detailProjectSearch]);
 
   const detailTotals = useMemo(() => {
-    const households = balanceDetailByProject.reduce((acc, r) => acc + r.householdCount, 0);
-    const householdsNotReceived = balanceDetailByProject.reduce((acc, r) => acc + r.householdNotReceived, 0);
-    const totalPheDuyetSum = balanceDetailByProject.reduce((acc, r) => acc + r.totalPheDuyet, 0);
-    const disbursedSum = balanceDetailByProject.reduce((acc, r) => acc + r.disbursedTotal, 0);
-    const interestSum = balanceDetailByProject.reduce((acc, r) => acc + r.interest, 0);
-    const interestLockedSum = balanceDetailByProject.reduce((acc, r) => acc + r.interestLocked, 0);
-    const remainingSum = balanceDetailByProject.reduce((acc, r) => acc + r.remaining, 0);
+    const households = balanceDetailVisible.reduce((acc, r) => acc + r.householdCount, 0);
+    const householdsNotReceived = balanceDetailVisible.reduce((acc, r) => acc + r.householdNotReceived, 0);
+    const totalPheDuyetSum = balanceDetailVisible.reduce((acc, r) => acc + r.totalPheDuyet, 0);
+    const disbursedSum = balanceDetailVisible.reduce((acc, r) => acc + r.disbursedTotal, 0);
+    const interestSum = balanceDetailVisible.reduce((acc, r) => acc + r.interest, 0);
+    const interestLockedSum = balanceDetailVisible.reduce((acc, r) => acc + r.interestLocked, 0);
+    const remainingSum = balanceDetailVisible.reduce((acc, r) => acc + r.remaining, 0);
     return {
       households,
       householdsNotReceived,
@@ -398,15 +510,19 @@ export const BankBalance: React.FC<BankBalanceProps> = ({
       interestLockedSum: roundTo2(interestLockedSum),
       remainingSum: roundTo2(remainingSum)
     };
-  }, [balanceDetailByProject]);
+  }, [balanceDetailVisible]);
 
-  const detailTotalPages = Math.max(1, Math.ceil(balanceDetailByProject.length / DETAIL_PROJECTS_PAGE_SIZE));
+  const detailTotalPages = Math.max(1, Math.ceil(balanceDetailVisible.length / DETAIL_PROJECTS_PAGE_SIZE));
 
   useEffect(() => {
     if (!isBalanceDetailModalOpen) return;
-    const maxPage = Math.max(1, Math.ceil(balanceDetailByProject.length / DETAIL_PROJECTS_PAGE_SIZE));
+    const maxPage = Math.max(1, Math.ceil(balanceDetailVisible.length / DETAIL_PROJECTS_PAGE_SIZE));
     setDetailModalPage((p) => Math.min(Math.max(1, p), maxPage));
-  }, [isBalanceDetailModalOpen, balanceDetailByProject.length]);
+  }, [isBalanceDetailModalOpen, balanceDetailVisible.length]);
+
+  useEffect(() => {
+    setDetailModalPage(1);
+  }, [detailDateFrom, detailDateTo, detailProjectSearch]);
 
   const handleTxSubmit = () => {
     if (readOnlyStaff) {
@@ -449,7 +565,7 @@ export const BankBalance: React.FC<BankBalanceProps> = ({
   };
 
   const detailPageOffset = (detailModalPage - 1) * DETAIL_PROJECTS_PAGE_SIZE;
-  const balanceDetailPaged = balanceDetailByProject.slice(
+  const balanceDetailPaged = balanceDetailVisible.slice(
     detailPageOffset,
     detailPageOffset + DETAIL_PROJECTS_PAGE_SIZE
   );
@@ -465,6 +581,7 @@ export const BankBalance: React.FC<BankBalanceProps> = ({
           type="button"
           onClick={() => {
             setDetailModalPage(1);
+            setDetailProjectSearch('');
             setIsBalanceDetailModalOpen(true);
           }}
           className="flex items-center gap-2 px-4 py-2.5 rounded-xl border border-slate-300 bg-white text-xs font-black text-slate-800 uppercase tracking-wide shadow-sm hover:bg-slate-50 hover:border-slate-400 transition-colors"
@@ -563,10 +680,10 @@ export const BankBalance: React.FC<BankBalanceProps> = ({
               <div className="flex items-center gap-2 shrink-0">
                 <button
                   type="button"
-                  disabled={balanceDetailByProject.length === 0}
+                  disabled={balanceDetailVisible.length === 0}
                   onClick={() => {
                     exportBalanceProjectDetailToExcel(
-                      balanceDetailByProject.map(
+                      balanceDetailVisible.map(
                         ({
                           code,
                           name,
@@ -607,6 +724,73 @@ export const BankBalance: React.FC<BankBalanceProps> = ({
                   <X size={20} />
                 </button>
               </div>
+            </div>
+
+            <div className="flex flex-wrap items-end gap-3 px-4 sm:px-5 py-3 border-b border-slate-200 bg-slate-50/60 shrink-0">
+              <div className="flex flex-col gap-1">
+                <label htmlFor="balance-detail-from" className="text-[10px] font-black text-slate-500 uppercase tracking-wide">
+                  Từ ngày
+                </label>
+                <input
+                  id="balance-detail-from"
+                  type="date"
+                  value={detailDateFrom}
+                  onChange={(e) => setDetailDateFrom(e.target.value)}
+                  className="rounded-lg border border-slate-300 bg-white px-2.5 py-2 text-xs font-semibold text-slate-800 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                />
+              </div>
+              <div className="flex flex-col gap-1">
+                <label htmlFor="balance-detail-to" className="text-[10px] font-black text-slate-500 uppercase tracking-wide">
+                  Đến ngày
+                </label>
+                <input
+                  id="balance-detail-to"
+                  type="date"
+                  value={detailDateTo}
+                  onChange={(e) => setDetailDateTo(e.target.value)}
+                  className="rounded-lg border border-slate-300 bg-white px-2.5 py-2 text-xs font-semibold text-slate-800 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                />
+              </div>
+              <div className="flex flex-col gap-1 flex-1 min-w-[200px] max-w-md">
+                <label htmlFor="balance-detail-search" className="text-[10px] font-black text-slate-500 uppercase tracking-wide">
+                  Tìm mã / tên dự án
+                </label>
+                <div className="relative">
+                  <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                  <input
+                    id="balance-detail-search"
+                    type="text"
+                    value={detailProjectSearch}
+                    onChange={(e) => setDetailProjectSearch(e.target.value)}
+                    placeholder="Nhập mã hoặc tên..."
+                    className="w-full rounded-lg border border-slate-300 bg-white pl-8 pr-2 py-2 text-xs font-semibold text-slate-800 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  />
+                </div>
+              </div>
+              {(detailDateFrom || detailDateTo || detailProjectSearch.trim()) && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDetailDateFrom('');
+                    setDetailDateTo('');
+                    setDetailProjectSearch('');
+                  }}
+                  className="mb-0.5 rounded-lg border border-slate-300 bg-white px-3 py-2 text-[11px] font-bold text-slate-700 hover:bg-slate-100"
+                >
+                  Xóa lọc
+                </button>
+              )}
+              {detailDateRange && (
+                <p className="mb-0.5 text-[11px] font-medium text-slate-600 max-w-xl">
+                  Chỉ tính các hồ sơ có mốc ngày (quyết định / lãi / giải ngân / rút) trong khoảng đã chọn. Lãi chưa giải ngân tính đến hết ngày kết thúc lọc
+                  (nếu sau hôm nay thì dùng mốc hôm nay).
+                </p>
+              )}
+              {detailDateRangeInvalid && (
+                <p className="mb-0.5 text-[11px] font-bold text-rose-600">
+                  «Từ ngày» không được sau «Đến ngày». Đang hiển thị toàn bộ dữ liệu (bỏ qua lọc).
+                </p>
+              )}
             </div>
 
             <div className="overflow-y-auto overflow-x-hidden flex-1 min-h-0 p-3 sm:p-4">
@@ -674,7 +858,16 @@ export const BankBalance: React.FC<BankBalanceProps> = ({
                   {balanceDetailByProject.length === 0 && (
                     <tr>
                       <td colSpan={10} className="border border-slate-300 px-4 py-8 text-center text-slate-500 font-medium">
-                        Không có khoản chưa giải ngân trên các dự án hiện tại (hoặc chưa có dữ liệu).
+                        {detailDateRange
+                          ? 'Không có hồ sơ nào có mốc ngày trong khoảng đã chọn (hoặc không đủ điều kiện hiển thị dòng).'
+                          : 'Không có khoản chưa giải ngân trên các dự án hiện tại (hoặc chưa có dữ liệu).'}
+                      </td>
+                    </tr>
+                  )}
+                  {balanceDetailByProject.length > 0 && balanceDetailVisible.length === 0 && (
+                    <tr>
+                      <td colSpan={10} className="border border-slate-300 px-4 py-8 text-center text-slate-500 font-medium">
+                        Không có dự án nào khớp từ khóa «{detailProjectSearch.trim()}» (mã hoặc tên).
                       </td>
                     </tr>
                   )}
@@ -683,8 +876,8 @@ export const BankBalance: React.FC<BankBalanceProps> = ({
               {detailTotalPages > 1 && (
                 <div className="flex items-center justify-between gap-3 mt-4 pt-3 border-t border-slate-200">
                   <p className="text-[11px] font-semibold text-slate-600">
-                    {balanceDetailByProject.length} dự án — hiển thị {detailPageOffset + 1}–
-                    {Math.min(detailPageOffset + DETAIL_PROJECTS_PAGE_SIZE, balanceDetailByProject.length)}
+                    {balanceDetailVisible.length} dự án — hiển thị {detailPageOffset + 1}–
+                    {Math.min(detailPageOffset + DETAIL_PROJECTS_PAGE_SIZE, balanceDetailVisible.length)}
                   </p>
                   <div className="flex items-center gap-2">
                     <button

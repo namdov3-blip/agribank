@@ -17,6 +17,8 @@ export interface IProject extends Document {
     updatedAt: Date;
     /** Khi false, user thường không thấy project/giao dịch trong list và tính toán cho đến khi duyệt */
     templateApproved: boolean;
+    /** Khóa mọi thao tác ghi lên giao dịch thuộc dự án (mọi user kể cả elevated). */
+    transactionsLocked?: boolean;
 }
 
 const ProjectSchema = new Schema<IProject>({
@@ -38,7 +40,8 @@ const ProjectSchema = new Schema<IProject>({
         required: true
     },
     uploadedBy: { type: Schema.Types.ObjectId, ref: 'User' },
-    templateApproved: { type: Boolean, default: true }
+    templateApproved: { type: Boolean, default: true },
+    transactionsLocked: { type: Boolean, default: false }
 }, { timestamps: true });
 
 ProjectSchema.index({ organization: 1 });

@@ -39,7 +39,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 password: hashedPassword,
                 role: 'Admin',
                 avatar: 'https://api.dicebear.com/7.x/avataaars/svg?seed=Admin',
-                permissions: ['dashboard', 'projects', 'balance', 'transactions', 'reports', 'admin'],
+                permissions: ['dashboard', 'projects', 'balance', 'transactions', 'reports', 'admin', 'pdf', 'interestCalc'],
                 organization: ORGANIZATIONS[0] // Default to first org for admin
             });
         }

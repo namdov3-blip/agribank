@@ -11,6 +11,7 @@ import { Admin } from './pages/Admin';
 import { Login } from './pages/Login';
 import { ConfirmPage } from './pages/ConfirmPage';
 import { InterestCalculator } from './pages/InterestCalculator';
+import { PdfDecisionScans } from './pages/PdfDecisionScans';
 import { LiveClock } from './components/LiveClock';
 import { api } from './services/api';
 import { useDashboardPoll } from './hooks/usePoll';
@@ -570,6 +571,8 @@ const App: React.FC = () => {
           interestRate={interestRate}
           currentUser={currentUser!}
         />;
+      case 'pdf':
+        return <PdfDecisionScans currentUser={currentUser!} readOnlyStaff={readOnlyStaff} />;
       default:
         return null;
     }

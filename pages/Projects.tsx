@@ -2,7 +2,7 @@ import React, { useRef, useState, useMemo } from 'react';
 import api from '../services/api';
 import { GlassCard } from '../components/GlassCard';
 import { formatDate, formatCurrency, calculateInterest, calculateInterestWithRateChange, exportProjectsToExcel, roundTo2, roundHalfUp, isElevatedWorkspaceRole } from '../utils/helpers';
-import { Plus, FolderKanban, Coins, Loader2, X, Check, FileSpreadsheet, Edit2, Eye, Calendar, Save, Tag, Type, Trash2, Search, ChevronLeft, ChevronRight, Download, ShieldCheck } from 'lucide-react';
+import { Plus, FolderKanban, Coins, Loader2, X, Check, FileSpreadsheet, Edit2, Eye, Calendar, Save, Tag, Type, Trash2, Search, ChevronLeft, ChevronRight, Download, ShieldCheck, Lock, Unlock } from 'lucide-react';
 import { Project, Transaction, TransactionStatus, User } from '../types';
 
 interface ProjectsProps {
@@ -74,6 +74,20 @@ export const Projects: React.FC<ProjectsProps> = ({
       await onApproveTemplateDone?.();
     } catch (e: any) {
       alert(e?.message || 'Duyệt thất bại');
+    }
+  };
+
+  const handleToggleTransactionsLock = async (proj: Project, locked: boolean) => {
+    if (!elevated || !proj.id) return;
+    const msg = locked
+      ? `Khóa chỉnh sửa toàn bộ giao dịch dự án «${proj.code}»?\nKhông ai được sửa, xóa hay đổi trạng thái hồ sơ cho đến khi mở khóa (kể cả Kế toán trưởng / Admin khi đang khóa).`
+      : `Mở khóa giao dịch dự án «${proj.code}»?`;
+    if (!window.confirm(msg)) return;
+    try {
+      await api.projects.setTransactionsLock(proj.id, locked);
+      await onApproveTemplateDone?.();
+    } catch (e: any) {
+      alert(e?.message || 'Thao tác thất bại');
     }
   };
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -608,6 +622,7 @@ export const Projects: React.FC<ProjectsProps> = ({
                 );
                 const needsElevatedReview =
                   project.templateApproved === false || hasStaffPendingTx;
+                const projectTxLocked = project.transactionsLocked === true;
 
                 return (
                   <tr key={project.id} className="hover:bg-blue-50/30 transition-colors">
@@ -623,15 +638,26 @@ export const Projects: React.FC<ProjectsProps> = ({
                       <p className="text-slate-900 font-bold">{project.name}</p>
                     </td>
                     <td className="px-4 py-3 text-center border-r border-slate-200">
-                      {needsElevatedReview ? (
-                        <span className="inline-block text-[11px] font-bold px-2.5 py-1 rounded-lg bg-amber-100 text-amber-900 border border-amber-200">
-                          Chờ duyệt
+                      <div className="flex flex-col items-center gap-1.5">
+                        {needsElevatedReview ? (
+                          <span className="inline-block text-[11px] font-bold px-2.5 py-1 rounded-lg bg-amber-100 text-amber-900 border border-amber-200">
+                            Chờ duyệt
+                          </span>
+                        ) : (
+                          <span className="inline-block text-[11px] font-bold px-2.5 py-1 rounded-lg bg-emerald-50 text-emerald-800 border border-emerald-200">
+                            Duyệt
+                          </span>
+                        )}
+                        <span
+                          className={`inline-block text-[10px] font-bold px-2 py-0.5 rounded-md border ${
+                            projectTxLocked
+                              ? 'bg-rose-50 text-rose-800 border-rose-200'
+                              : 'bg-slate-50 text-slate-600 border-slate-200'
+                          }`}
+                        >
+                          GD: {projectTxLocked ? 'Đã khóa' : 'Đang mở'}
                         </span>
-                      ) : (
-                        <span className="inline-block text-[11px] font-bold px-2.5 py-1 rounded-lg bg-emerald-50 text-emerald-800 border border-emerald-200">
-                          Duyệt
-                        </span>
-                      )}
+                      </div>
                     </td>
                     <td className="px-4 py-3 text-right font-bold text-slate-800 border-r border-slate-200">
                       {formatCurrency(actualTotalBudget)}
@@ -665,6 +691,20 @@ export const Projects: React.FC<ProjectsProps> = ({
                             title="Duyệt template / giao dịch import"
                           >
                             <ShieldCheck size={16} strokeWidth={2} />
+                          </button>
+                        )}
+                        {elevated && (
+                          <button
+                            type="button"
+                            onClick={() => handleToggleTransactionsLock(project, !projectTxLocked)}
+                            className={`p-1.5 rounded-lg transition-all border ${
+                              projectTxLocked
+                                ? 'text-emerald-700 hover:bg-emerald-100 border-emerald-200'
+                                : 'text-rose-700 hover:bg-rose-50 border-rose-200'
+                            }`}
+                            title={projectTxLocked ? 'Mở khóa — cho phép sửa giao dịch' : 'Khóa — không ai sửa được giao dịch'}
+                          >
+                            {projectTxLocked ? <Unlock size={16} strokeWidth={2} /> : <Lock size={16} strokeWidth={2} />}
                           </button>
                         )}
                         <button

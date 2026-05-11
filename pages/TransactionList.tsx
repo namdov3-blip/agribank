@@ -64,6 +64,14 @@ export const TransactionList: React.FC<TransactionListProps> = ({
     return projects.find(p => (p.id === pIdStr || (p as any)._id === pIdStr));
   }, [projects]);
 
+  const selectedTouchesLockedProject = useMemo(() => {
+    for (const id of selectedTransactions) {
+      const t = transactions.find((tx) => tx.id === id);
+      if (t && resolveProject(t)?.transactionsLocked) return true;
+    }
+    return false;
+  }, [selectedTransactions, transactions, resolveProject]);
+
   const getRelevantDate = React.useCallback((t: Transaction, projectParam?: Project) => {
     const project = projectParam || resolveProject(t);
     // ALWAYS return the interest start date for filtering, regardless of disbursement status
@@ -490,10 +498,14 @@ export const TransactionList: React.FC<TransactionListProps> = ({
                 </button>
                 <button
                   type="button"
-                  disabled={readOnlyStaff}
+                  disabled={readOnlyStaff || selectedTouchesLockedProject}
                   onClick={async () => {
                     if (readOnlyStaff) {
                       alert('Hệ thống đang khóa chỉnh sửa.');
+                      return;
+                    }
+                    if (selectedTouchesLockedProject) {
+                      alert('Trong các dòng đã chọn có dự án đang khóa giao dịch — không thể giải ngân hàng loạt.');
                       return;
                     }
                     const pendingIds = Array.from(selectedTransactions).filter(id => {
@@ -547,10 +559,14 @@ export const TransactionList: React.FC<TransactionListProps> = ({
                 </button>
                 <button
                   type="button"
-                  disabled={readOnlyStaff}
+                  disabled={readOnlyStaff || selectedTouchesLockedProject}
                   onClick={async () => {
                     if (readOnlyStaff) {
                       alert('Hệ thống đang khóa chỉnh sửa.');
+                      return;
+                    }
+                    if (selectedTouchesLockedProject) {
+                      alert('Trong các dòng đã chọn có dự án đang khóa giao dịch — không thể xóa hàng loạt.');
                       return;
                     }
                     if (selectedTransactions.size === 0) return;
@@ -698,6 +714,7 @@ export const TransactionList: React.FC<TransactionListProps> = ({
               {paginatedData.map((t, index) => {
 
                 const project = resolveProject(t);
+                const projectTxLocked = project?.transactionsLocked === true;
                 // Use effective status at filter time
                 const effectiveStatus = getEffectiveStatus(t);
                 const isDisbursed = effectiveStatus === TransactionStatus.DISBURSED;
@@ -780,6 +797,8 @@ export const TransactionList: React.FC<TransactionListProps> = ({
                     <td className="px-4 py-3 border-r border-slate-200 text-center" onClick={(e) => e.stopPropagation()}>
                       <input
                         type="checkbox"
+                        disabled={readOnlyStaff || projectTxLocked}
+                        title={projectTxLocked ? 'Dự án đang khóa giao dịch' : undefined}
                         checked={selectedTransactions.has(t.id)}
                         onChange={(e) => {
                           e.stopPropagation();
@@ -791,7 +810,7 @@ export const TransactionList: React.FC<TransactionListProps> = ({
                           }
                           setSelectedTransactions(newSet);
                         }}
-                        className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                        className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500 disabled:opacity-40"
                       />
                     </td>
                     <td className="px-4 py-3 border-r border-slate-200 text-center font-bold text-slate-600">
@@ -804,9 +823,16 @@ export const TransactionList: React.FC<TransactionListProps> = ({
                       {t.household.id}
                     </td>
                     <td className="px-4 py-3 border-r border-slate-200">
-                      <span className="text-xs font-bold bg-blue-50 px-2 py-1 rounded text-blue-700">
-                        {project ? project.code : (t.projectId as any).toString()}
-                      </span>
+                      <div className="flex flex-col items-start gap-1">
+                        <span className="text-xs font-bold bg-blue-50 px-2 py-1 rounded text-blue-700">
+                          {project ? project.code : (t.projectId as any).toString()}
+                        </span>
+                        {projectTxLocked && (
+                          <span className="text-[9px] font-bold uppercase tracking-wide text-rose-700 bg-rose-50 border border-rose-200 px-1.5 py-0.5 rounded">
+                            Dự án khóa GD
+                          </span>
+                        )}
+                      </div>
                     </td>
                     <td className="px-4 py-3 border-r border-slate-200">
                       <span className="text-slate-900 font-bold text-[13px] group-hover:text-blue-700 transition-colors block">{t.household.name}</span>

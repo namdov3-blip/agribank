@@ -18,6 +18,10 @@
             "destination": "/api/projects"
         },
         {
+            "source": "/api/decision-pdfs/(.*)",
+            "destination": "/api/decision-pdfs"
+        },
+        {
             "source": "/api/bank/(.*)",
             "destination": "/api/bank"
         },

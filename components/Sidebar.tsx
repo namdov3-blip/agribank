@@ -1,6 +1,6 @@
 
 import React, { useState } from 'react';
-import { LayoutDashboard, FolderKanban, Users, LogOut, ShieldCheck, Landmark, Calculator } from 'lucide-react';
+import { LayoutDashboard, FolderKanban, Users, LogOut, ShieldCheck, Landmark, Calculator, FileText } from 'lucide-react';
 import { User } from '../types';
 import { isSuperAdminOrAdminRole, isStaffEditingPolicyExempt } from '../utils/helpers';
 
@@ -28,6 +28,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     { id: 'balance', icon: Landmark, label: 'Số dư' },
     { id: 'transactions', icon: Users, label: 'Giao dịch' },
     { id: 'interestCalc', icon: Calculator, label: 'Tính lãi dự kiến' },
+    { id: 'pdf', icon: FileText, label: 'PDF' },
     { id: 'admin', icon: ShieldCheck, label: 'Admin' },
   ];
 

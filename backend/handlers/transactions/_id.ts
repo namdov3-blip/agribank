@@ -2,7 +2,7 @@ import { VercelRequest, VercelResponse } from '@vercel/node';
 import connectDB from '../../../lib/mongodb';
 import { Transaction, Project, AuditLog, Settings, BankTransaction, User } from '../../../lib/models';
 import { authMiddleware } from '../../../lib/auth';
-import { assertStaffMayMutate } from '../../../lib/mutation-policy';
+import { assertStaffMayMutate, assertProjectTransactionsUnlockedForWrite } from '../../../lib/mutation-policy';
 import { calculateInterest } from '../../../lib/utils/interest';
 
 // Helper to format currency
@@ -103,6 +103,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 return res.status(404).json({ error: 'Không tìm thấy giao dịch' });
             }
 
+            if (!(await assertProjectTransactionsUnlockedForWrite(transaction.projectId, res))) return;
+
             // Update fields
             if (household) {
                 transaction.household = { ...transaction.household, ...household };
@@ -179,6 +181,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             if (!transaction) {
                 return res.status(404).json({ error: 'Không tìm thấy giao dịch' });
             }
+
+            if (!(await assertProjectTransactionsUnlockedForWrite(transaction.projectId, res))) return;
 
             // Get project and user organization
             const project = await (Project as any).findById(transaction.projectId);

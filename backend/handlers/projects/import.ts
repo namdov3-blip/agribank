@@ -2,7 +2,7 @@ import { VercelRequest, VercelResponse } from '@vercel/node';
 import connectDB from '../../../lib/mongodb';
 import { Project, Transaction, AuditLog, BankTransaction, User } from '../../../lib/models';
 import { authMiddleware } from '../../../lib/auth';
-import { assertStaffMayMutate, isElevatedRole } from '../../../lib/mutation-policy';
+import { assertStaffMayMutate, isElevatedRole, isProjectTransactionsLocked } from '../../../lib/mutation-policy';
 import * as XLSX from 'xlsx';
 
 // Build fallback household ID when source data doesn't provide one
@@ -393,6 +393,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 }
 
                 project = existingProject;
+
+                if (isProjectTransactionsLocked(project)) {
+                    return res.status(403).json({
+                        error: 'Dự án đang khóa chỉnh sửa giao dịch — không được import/merge thêm hồ sơ.'
+                    });
+                }
                 
                 // Update project metadata if provided
                 if (baseProjectName && project.name !== baseProjectName) {

@@ -2,7 +2,7 @@ import { VercelRequest, VercelResponse } from '@vercel/node';
 import connectDB from '../../../../lib/mongodb';
 import { Transaction, Project, BankTransaction, AuditLog, Settings } from '../../../../lib/models';
 import { verifyQRToken } from '../../../../lib/auth';
-import { getGlobalEditingAllowed } from '../../../../lib/mutation-policy';
+import { getGlobalEditingAllowed, isProjectTransactionsLocked, assertProjectTransactionsUnlockedForWrite } from '../../../../lib/mutation-policy';
 import { toZonedTime } from 'date-fns-tz';
 import { calculateInterest, calculateInterestWithRateChange, getVNStartOfDay } from '../../../../lib/utils/interest';
 import { fromVNTime } from '../../../../utils/helpers';
@@ -52,6 +52,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         // GET - Just return transaction info
         if (req.method === 'GET') {
             const project = await (Project as any).findById(transaction.projectId);
+            if (isProjectTransactionsLocked(project)) {
+                return res.status(403).json({
+                    error:
+                        'Dự án đang khóa chỉnh sửa giao dịch — không thể xem hoặc xác nhận giải ngân qua mã QR. Liên hệ Kế toán trưởng / Admin để mở khóa.',
+                    data: { projectTransactionsLocked: true, projectCode: project?.code }
+                });
+            }
             const settings = await (Settings as any).findOne({ key: 'global' }) || { interestRate: 6.5 };
             const interestRate = settings.interestRate;
             const hasRateChange = settings.interestRateChangeDate &&
@@ -100,8 +107,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             const totalAmount = transaction.compensation.totalApproved + interest + supplementary;
 
             const editingAllowed = await getGlobalEditingAllowed();
-            const canConfirm =
-                transaction.status !== 'Đã giải ngân' && editingAllowed;
+            const canConfirm = transaction.status !== 'Đã giải ngân' && editingAllowed;
 
             return res.status(200).json({
                 success: true,
@@ -117,6 +123,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                     supplementary,
                     totalAmount,
                     editingAllowed,
+                    projectTransactionsLocked: false,
                     canConfirm
                 }
             });
@@ -130,6 +137,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                         'Hệ thống đang khóa chỉnh sửa (Disable). Không thể xác nhận giải ngân qua QR. Liên hệ Kế toán trưởng / Admin để bật lại.'
                 });
             }
+
+            if (!(await assertProjectTransactionsUnlockedForWrite(transaction.projectId, res))) return;
 
             if (transaction.status === 'Đã giải ngân') {
                 return res.status(400).json({ error: 'Giao dịch đã được giải ngân trước đó' });

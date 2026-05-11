@@ -3,6 +3,7 @@ import projectsIndex from '../backend/handlers/projects/index';
 import projectsImport from '../backend/handlers/projects/import';
 import projectsId from '../backend/handlers/projects/_id';
 import approveTemplate from '../backend/handlers/projects/approve-template';
+import transactionsLock from '../backend/handlers/projects/transactions-lock';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
     const { url } = req;
@@ -17,6 +18,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         if (projectId && segments[segments.length - 1] === 'approve-template') {
             req.query = { ...req.query, projectId };
             return await approveTemplate(req, res);
+        }
+    }
+
+    if (path.endsWith('/transactions-lock')) {
+        const segments = path.split('/').filter(Boolean);
+        const projectId = segments[segments.length - 2];
+        if (projectId && segments[segments.length - 1] === 'transactions-lock') {
+            req.query = { ...req.query, projectId };
+            return await transactionsLock(req, res);
         }
     }
 

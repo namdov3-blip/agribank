@@ -44,7 +44,7 @@ export const Admin: React.FC<AdminProps> = ({
   const [newUser, setNewUser] = useState<Partial<User>>({
     name: '',
     role: 'User2',
-    permissions: ['dashboard', 'projects', 'transactions', 'interestCalc'], // Default perms (kèm tính lãi dự kiến)
+    permissions: ['dashboard', 'projects', 'transactions', 'interestCalc', 'pdf'], // Default perms (kèm tính lãi dự kiến + PDF)
     password: '',
     organization: undefined
   });
@@ -86,6 +86,7 @@ export const Admin: React.FC<AdminProps> = ({
     { id: 'transactions', label: 'Giao dịch & Chi tiết' },
     { id: 'balance', label: 'Số dư' },
     { id: 'interestCalc', label: 'Tính lãi dự kiến' },
+    { id: 'pdf', label: 'PDF quyết định (scan)' },
     { id: 'admin', label: 'Admin' },
   ];
 
@@ -117,7 +118,7 @@ export const Admin: React.FC<AdminProps> = ({
       details: `Tạo tài khoản mới: ${userToAdd.name} (${userToAdd.role})${userToAdd.organization ? ` - ${userToAdd.organization}` : ''}`
     }]);
 
-    setNewUser({ name: '', role: 'User2', permissions: ['dashboard', 'projects', 'transactions', 'interestCalc'], password: '', organization: undefined });
+    setNewUser({ name: '', role: 'User2', permissions: ['dashboard', 'projects', 'transactions', 'interestCalc', 'pdf'], password: '', organization: undefined });
   };
 
   const togglePermission = (permId: string, isEditing = false) => {

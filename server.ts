@@ -79,6 +79,10 @@ app.post('/api/projects/:id/approve-template', (req, res) => {
     Object.assign(req.query, { projectId: req.params.id });
     handle(req, res, './backend/handlers/projects/approve-template');
 });
+app.post('/api/projects/:id/transactions-lock', (req, res) => {
+    Object.assign(req.query, { projectId: req.params.id });
+    handle(req, res, './backend/handlers/projects/transactions-lock');
+});
 
 // ============ TRANSACTIONS ============
 app.get('/api/transactions', (req, res) => handle(req, res, './backend/handlers/transactions/index'));
@@ -122,6 +126,18 @@ app.all('/api/transactions/confirm/:token', (req, res) => {
     Object.assign(req.query, req.params);
     handle(req, res, './backend/handlers/transactions/confirm/_token');
 });
+
+// ============ PDF QUYẾT ĐỊNH (scan) ============
+app.get('/api/decision-pdfs/:id/file', (req, res) => {
+    Object.assign(req.query, { id: req.params.id });
+    handle(req, res, './backend/handlers/decision-pdfs/file');
+});
+app.delete('/api/decision-pdfs/:id', (req, res) => {
+    Object.assign(req.query, { id: req.params.id });
+    handle(req, res, './backend/handlers/decision-pdfs/delete');
+});
+app.get('/api/decision-pdfs', (req, res) => handle(req, res, './backend/handlers/decision-pdfs/list'));
+app.post('/api/decision-pdfs', (req, res) => handle(req, res, './backend/handlers/decision-pdfs/upload'));
 
 // ============ BANK ============
 app.get('/api/bank/balance', (req, res) => handle(req, res, './backend/handlers/bank/balance'));

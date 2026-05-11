@@ -71,7 +71,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 password: hashedPassword,
                 role: role || 'User2',
                 avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(name)}`,
-                permissions: (permissions && permissions.length > 0) ? permissions : ['dashboard', 'projects', 'transactions', 'interestCalc'],
+                permissions: (permissions && permissions.length > 0) ? permissions : ['dashboard', 'projects', 'transactions', 'interestCalc', 'pdf'],
                 organization: organization
             });
 

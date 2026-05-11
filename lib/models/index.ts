@@ -4,3 +4,4 @@ export { default as Transaction } from './Transaction';
 export { default as BankTransaction } from './BankTransaction';
 export { default as AuditLog } from './AuditLog';
 export { default as Settings } from './Settings';
+export { default as DecisionPdfScan } from './DecisionPdfScan';

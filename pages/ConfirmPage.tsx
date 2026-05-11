@@ -24,6 +24,8 @@ interface TransactionInfo {
     canConfirm: boolean;
     /** false khi Admin/KTT đặt Disable — không cho xác nhận QR */
     editingAllowed?: boolean;
+    /** true khi dự án bị khóa giao dịch */
+    projectTransactionsLocked?: boolean;
 }
 
 // Helper function to decode JWT expiration
@@ -243,6 +245,11 @@ export const ConfirmPage: React.FC<ConfirmPageProps> = ({ transactionId, current
                         {isAlreadyDisbursed ? (
                             <>
                                 Giao dịch cho hộ <span className="font-bold">{txInfo.household}</span> đã được giải ngân trước đó.
+                            </>
+                        ) : txInfo.projectTransactionsLocked ? (
+                            <>
+                                Dự án <span className="font-bold">{txInfo.projectCode || ''}</span> đang{' '}
+                                <span className="font-bold">khóa chỉnh sửa giao dịch</span>. Không thể xác nhận giải ngân qua QR cho đến khi Kế toán trưởng / Admin mở khóa dự án.
                             </>
                         ) : (
                             <>

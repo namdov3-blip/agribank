@@ -151,7 +151,13 @@ export const projectsAPI = {
     }),
 
     approveTemplate: (id: string) =>
-        fetchAPI<{ data: any }>(`/projects/${id}/approve-template`, { method: 'POST' })
+        fetchAPI<{ data: any }>(`/projects/${id}/approve-template`, { method: 'POST' }),
+
+    setTransactionsLock: (id: string, locked: boolean) =>
+        fetchAPI<{ data: any }>(`/projects/${id}/transactions-lock`, {
+            method: 'POST',
+            body: JSON.stringify({ locked })
+        })
 };
 
 // ============ TRANSACTIONS ============
@@ -294,6 +300,29 @@ export const settingsAPI = {
         })
 };
 
+export type DecisionPdfListItem = {
+    id: string;
+    organization: string;
+    originalFileName: string;
+    note: string;
+    sizeBytes: number;
+    createdAt: string;
+    uploadedByName: string;
+};
+
+// ============ PDF QUYẾT ĐỊNH ============
+export const decisionPdfsAPI = {
+    list: () => fetchAPI<{ data: DecisionPdfListItem[] }>('/decision-pdfs'),
+    upload: (body: { fileName: string; pdfBase64: string; note?: string }) =>
+        fetchAPI<{ data: DecisionPdfListItem }>('/decision-pdfs', {
+            method: 'POST',
+            body: JSON.stringify(body)
+        }),
+    delete: (id: string) => fetchAPI<{ success: boolean }>(`/decision-pdfs/${id}`, { method: 'DELETE' }),
+    /** URL tải/xem PDF (kèm Bearer khi fetch từ JS) */
+    fileUrl: (id: string) => `${API_BASE}/decision-pdfs/${id}/file`
+};
+
 // ============ AUDIT LOGS ============
 export const auditAPI = {
     list: (params?: { action?: string; actor?: string; page?: number }) => {
@@ -334,7 +363,8 @@ export const api = {
     settings: settingsAPI,
     audit: auditAPI,
     admin: adminAPI,
-    poll: pollAPI
+    poll: pollAPI,
+    decisionPdfs: decisionPdfsAPI
 };
 
 export default api;
