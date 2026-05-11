@@ -389,78 +389,80 @@ export const BankBalance: React.FC<BankBalanceProps> = ({
       txsByPid.get(pid)!.push(t);
     }
 
-    const range = detailDateRange;
-    const interestAsOf = range
-      ? (() => {
-          const cap = new Date();
-          return range.end > cap ? cap : range.end;
-        })()
-      : undefined;
+    const rangeActive =
+      detailDateRange && !detailDateRangeInvalid ? detailDateRange : null;
 
-    const rows = [...txsByPid.entries()]
-      .map(([projectId, projectTransAll]) => {
-        const projectTrans = range
-          ? projectTransAll.filter((t) => transactionInBalanceDetailDateRange(t, range.start, range.end))
-          : projectTransAll;
+    const interestAsOfForRange = (r: BalanceDetailDateRange) => {
+      const cap = new Date();
+      return r.end > cap ? cap : r.end;
+    };
 
-        if (range && projectTrans.length === 0) return null;
+    const buildRow = (
+      projectId: string,
+      projectTransAll: Transaction[],
+      projectTransInRange: Transaction[],
+      disbursementDateRange: BalanceDetailDateRange | null
+    ) => {
+      const project = resolveProject(projects, projectId);
+      const code = project?.code ?? projectId.slice(-8);
+      const name = project?.name ?? '—';
 
-        const project = resolveProject(projects, projectId);
-        const code = project?.code ?? projectId.slice(-8);
-        const name = project?.name ?? '—';
-        const householdCount = projectTrans.length;
-        const householdNotReceived = projectTrans.filter((t) => t.status !== TransactionStatus.DISBURSED).length;
+      // Có lọc ngày: giữ «Tổng hộ dân» = toàn bộ hồ sơ dự án; từ «Hộ chưa nhận» trở đi chỉ theo hồ sơ có mốc ngày trong khoảng (không có → 0).
+      const householdCount = projectTransAll.length;
+      const householdNotReceived = projectTransInRange.filter((t) => t.status !== TransactionStatus.DISBURSED).length;
 
-        const sumApprovedFromTx = projectTrans.reduce((s, t) => s + (t.compensation?.totalApproved ?? 0), 0);
-        const totalPheDuyet =
-          !range && project && project.totalBudget > 0
-            ? roundTo2(project.totalBudget)
-            : roundTo2(sumApprovedFromTx);
+      const sumApprovedFromTx = projectTransInRange.reduce((s, t) => s + (t.compensation?.totalApproved ?? 0), 0);
+      const totalPheDuyet =
+        !disbursementDateRange && project && project.totalBudget > 0
+          ? roundTo2(project.totalBudget)
+          : roundTo2(sumApprovedFromTx);
 
-        const disbursedTotal = sumDisbursedForProjectTransactions(
-          project,
-          projectTrans,
-          interestRate,
-          interestRateChangeDate,
-          interestRateBefore,
-          interestRateAfter,
-          range
-        );
-        const interest = sumInterestUndisbursedForProject(
-          project,
-          projectTrans,
-          interestRate,
-          interestRateChangeDate,
-          interestRateBefore,
-          interestRateAfter,
-          interestAsOf
-        );
-        const interestLocked = sumLockedInterestForProject(
-          project,
-          projectTrans,
-          interestRate,
-          interestRateChangeDate,
-          interestRateBefore,
-          interestRateAfter
-        );
-        const remaining = roundTo2(totalPheDuyet - disbursedTotal + interest + interestLocked);
+      const interestAsOf = disbursementDateRange ? interestAsOfForRange(disbursementDateRange) : undefined;
 
-        return {
-          projectId,
-          code,
-          name,
-          householdCount,
-          householdNotReceived,
-          totalPheDuyet,
-          disbursedTotal,
-          interest,
-          interestLocked,
-          remaining
-        };
-      })
-      .filter((r): r is NonNullable<typeof r> => r !== null);
+      const disbursedTotal = sumDisbursedForProjectTransactions(
+        project,
+        projectTransInRange,
+        interestRate,
+        interestRateChangeDate,
+        interestRateBefore,
+        interestRateAfter,
+        disbursementDateRange
+      );
+      const interest = sumInterestUndisbursedForProject(
+        project,
+        projectTransInRange,
+        interestRate,
+        interestRateChangeDate,
+        interestRateBefore,
+        interestRateAfter,
+        interestAsOf
+      );
+      const interestLocked = sumLockedInterestForProject(
+        project,
+        projectTransInRange,
+        interestRate,
+        interestRateChangeDate,
+        interestRateBefore,
+        interestRateAfter
+      );
+      const remaining = roundTo2(totalPheDuyet - disbursedTotal + interest + interestLocked);
 
-    return rows
+      return {
+        projectId,
+        code,
+        name,
+        householdCount,
+        householdNotReceived,
+        totalPheDuyet,
+        disbursedTotal,
+        interest,
+        interestLocked,
+        remaining
+      };
+    };
+
+    const rowsBase = [...txsByPid.entries()]
+      .map(([projectId, projectTransAll]) => buildRow(projectId, projectTransAll, projectTransAll, null))
       .sort((a, b) =>
         Number.isFinite(Number(a.code)) && Number.isFinite(Number(b.code))
           ? Number(a.code) - Number(b.code)
@@ -475,6 +477,19 @@ export const BankBalance: React.FC<BankBalanceProps> = ({
             Math.abs(r.interest) >= 0.005 ||
             Math.abs(r.interestLocked) >= 0.005)
       );
+
+    if (!rangeActive) {
+      return rowsBase;
+    }
+
+    return rowsBase.map((base) => {
+      const all = txsByPid.get(base.projectId);
+      if (!all) return base;
+      const inRange = all.filter((t) =>
+        transactionInBalanceDetailDateRange(t, rangeActive.start, rangeActive.end)
+      );
+      return buildRow(base.projectId, all, inRange, rangeActive);
+    });
   }, [
     transactions,
     projects,
@@ -482,7 +497,8 @@ export const BankBalance: React.FC<BankBalanceProps> = ({
     interestRateChangeDate,
     interestRateBefore,
     interestRateAfter,
-    detailDateRange
+    detailDateRange,
+    detailDateRangeInvalid
   ]);
 
   const balanceDetailVisible = useMemo(() => {
@@ -782,8 +798,7 @@ export const BankBalance: React.FC<BankBalanceProps> = ({
               )}
               {detailDateRange && (
                 <p className="mb-0.5 text-[11px] font-medium text-slate-600 max-w-xl">
-                  Chỉ tính các hồ sơ có mốc ngày (quyết định / lãi / giải ngân / rút) trong khoảng đã chọn. Lãi chưa giải ngân tính đến hết ngày kết thúc lọc
-                  (nếu sau hôm nay thì dùng mốc hôm nay).
+                  Danh sách dự án giữ nguyên như khi không lọc ngày. «Tổng hộ dân» = toàn bộ hồ sơ của dự án; từ «Hộ chưa nhận» đến «Còn lại» chỉ tính hồ sơ có mốc ngày (quyết định / lãi / giải ngân / rút) trong khoảng — không có hồ sơ nào trong khoảng thì các cột đó là 0. Lãi chưa giải ngân tính đến hết ngày kết thúc lọc (nếu sau hôm nay thì dùng mốc hôm nay).
                 </p>
               )}
               {detailDateRangeInvalid && (
@@ -858,9 +873,7 @@ export const BankBalance: React.FC<BankBalanceProps> = ({
                   {balanceDetailByProject.length === 0 && (
                     <tr>
                       <td colSpan={10} className="border border-slate-300 px-4 py-8 text-center text-slate-500 font-medium">
-                        {detailDateRange
-                          ? 'Không có hồ sơ nào có mốc ngày trong khoảng đã chọn (hoặc không đủ điều kiện hiển thị dòng).'
-                          : 'Không có khoản chưa giải ngân trên các dự án hiện tại (hoặc chưa có dữ liệu).'}
+                        Không có dự án nào đủ điều kiện hiển thị trong chi tiết (hoặc chưa có dữ liệu giao dịch theo dự án).
                       </td>
                     </tr>
                   )}
