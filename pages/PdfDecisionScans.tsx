@@ -1,8 +1,8 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { GlassCard } from '../components/GlassCard';
 import { formatDate } from '../utils/helpers';
 import { api, DecisionPdfListItem } from '../services/api';
-import { FileUp, Loader2, Trash2, ExternalLink, FileText } from 'lucide-react';
+import { FileUp, Loader2, Trash2, ExternalLink, FileText, Search } from 'lucide-react';
 import { User } from '../types';
 
 function formatBytes(n: number): string {
@@ -61,7 +61,18 @@ export const PdfDecisionScans: React.FC<PdfDecisionScansProps> = ({ currentUser,
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
   const [note, setNote] = useState('');
+  const [listSearch, setListSearch] = useState('');
   const [error, setError] = useState<string | null>(null);
+
+  const filteredRows = useMemo(() => {
+    const q = listSearch.trim().toLowerCase();
+    if (!q) return rows;
+    return rows.filter((r) => {
+      const name = (r.originalFileName || '').toLowerCase();
+      const n = (r.note || '').toLowerCase();
+      return name.includes(q) || n.includes(q);
+    });
+  }, [rows, listSearch]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -166,12 +177,30 @@ export const PdfDecisionScans: React.FC<PdfDecisionScansProps> = ({ currentUser,
       </GlassCard>
 
       <GlassCard className="p-0 overflow-hidden border-slate-200">
-        <div className="px-5 py-3 border-b border-slate-200 bg-slate-50/80 flex justify-between items-center">
-          <h3 className="text-sm font-bold text-slate-800 uppercase tracking-wide">Đã lưu</h3>
+        <div className="px-5 py-3 border-b border-slate-200 bg-slate-50/80 flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3">
+          <div className="flex flex-wrap items-end justify-between gap-3 flex-1 min-w-0">
+            <h3 className="text-sm font-bold text-slate-800 uppercase tracking-wide shrink-0">Đã lưu</h3>
+            <div className="flex flex-col gap-1 flex-1 min-w-[180px] max-w-md">
+              <label htmlFor="pdf-list-search" className="text-[10px] font-bold text-slate-500 uppercase">
+                Tìm theo tên file / ghi chú
+              </label>
+              <div className="relative">
+                <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                <input
+                  id="pdf-list-search"
+                  type="search"
+                  value={listSearch}
+                  onChange={(e) => setListSearch(e.target.value)}
+                  placeholder="Nhập tên file hoặc ghi chú..."
+                  className="w-full rounded-lg border border-slate-200 bg-white pl-8 pr-2 py-2 text-xs font-semibold text-slate-800 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                />
+              </div>
+            </div>
+          </div>
           <button
             type="button"
             onClick={() => load()}
-            className="text-xs font-bold text-blue-700 hover:underline"
+            className="text-xs font-bold text-blue-700 hover:underline shrink-0 self-start sm:self-auto"
           >
             Làm mới
           </button>
@@ -184,6 +213,10 @@ export const PdfDecisionScans: React.FC<PdfDecisionScansProps> = ({ currentUser,
           <div className="p-8 text-center text-rose-600 font-medium">{error}</div>
         ) : rows.length === 0 ? (
           <div className="p-12 text-center text-slate-500 font-medium">Chưa có file nào.</div>
+        ) : filteredRows.length === 0 ? (
+          <div className="p-12 text-center text-slate-500 font-medium">
+            Không có file nào khớp «{listSearch.trim()}» (tên file hoặc ghi chú).
+          </div>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm text-left">
@@ -198,7 +231,7 @@ export const PdfDecisionScans: React.FC<PdfDecisionScansProps> = ({ currentUser,
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {rows.map((r) => (
+                {filteredRows.map((r) => (
                   <tr key={r.id} className="hover:bg-slate-50/80">
                     <td className="px-4 py-3 font-semibold text-slate-900">{r.originalFileName}</td>
                     <td className="px-4 py-3 text-slate-600 text-xs max-w-xs truncate" title={r.note}>
