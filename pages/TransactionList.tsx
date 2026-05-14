@@ -209,7 +209,7 @@ export const TransactionList: React.FC<TransactionListProps> = ({
           displayDateStr.includes(termRaw) || // Search by Displayed Date (Expected or Actual)
           (t.paymentType && t.paymentType.toLowerCase().includes(term)) || // Search by Payment Type
           (typeof t.projectId === 'string' && t.projectId.toLowerCase().includes(term)) ||
-          project?.code.toLowerCase().includes(term) ||
+          (project?.code?.toLowerCase()?.includes(term) ?? false) ||
           // Search by Amount (số tiền)
           totalApprovedStr.includes(numericTerm) || // Tổng phê duyệt
           interestStr.includes(numericTerm) || // Lãi phát sinh

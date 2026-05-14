@@ -503,7 +503,7 @@ const App: React.FC = () => {
       case 'transactions':
         return <TransactionList
           transactions={transactions}
-          projects={reportingProjects}
+          projects={projects}
           interestRate={interestRate}
           interestRateChangeDate={interestRateChangeDate}
           interestRateBefore={interestRateBefore}
