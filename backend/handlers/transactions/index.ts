@@ -3,7 +3,7 @@ import connectDB from '../../../lib/mongodb';
 import { Transaction, Project, User, AuditLog } from '../../../lib/models';
 import mongoose from 'mongoose';
 import { authMiddleware } from '../../../lib/auth';
-import { getStaffHiddenReportProjectIds } from '../../../lib/mutation-policy';
+import { getStaffHiddenReportProjectIds, isElevatedRole } from '../../../lib/mutation-policy';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
     res.setHeader('Access-Control-Allow-Origin', '*');
@@ -34,6 +34,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
         let projectFilter: any = {};
         const roleKey = (payload.role ?? '').trim().replace(/\s+/g, '').toLowerCase();
+        const elevated = isElevatedRole(payload.role);
         const skipOrgNarrow =
             roleKey === 'superadmin' ||
             roleKey === 'admin' ||
@@ -41,8 +42,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         if (!skipOrgNarrow && currentUser.organization) {
             projectFilter.organization = currentUser.organization;
         }
-        /** Chỉ dự án đã được tính vào báo cáo (không chờ duyệt template / không chỉ có GD chờ import) — mọi role */
-        const reportHiddenIds = await getStaffHiddenReportProjectIds(payload, currentUser);
+        /**
+         * Staff: ẩn DA chờ duyệt template / merge chờ duyệt khỏi danh sách GD (báo cáo ổn định).
+         * KTT / Admin / SuperAdmin: vẫn cần thấy GD staffImportPending để tab Quản lý dự án hiện nút duyệt.
+         */
+        const reportHiddenIds = elevated
+            ? []
+            : await getStaffHiddenReportProjectIds(payload, currentUser);
         const hiddenObjIds = reportHiddenIds.map((i) => new mongoose.Types.ObjectId(i));
         if (reportHiddenIds.length > 0) {
             projectFilter._id = { $nin: hiddenObjIds };
@@ -65,11 +71,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             if (!orgAllowsProjectAccess(project)) {
                 return res.status(403).json({ error: 'Access denied to this project' });
             }
-            const hiddenSet = new Set(reportHiddenIds);
-            if (hiddenSet.has(project._id.toString())) {
-                return res.status(403).json({
-                    error: 'Dự án chờ duyệt chỉ được xem ở tab Quản lý dự án'
-                });
+            if (!elevated) {
+                const hiddenSet = new Set(reportHiddenIds);
+                if (hiddenSet.has(project._id.toString())) {
+                    return res.status(403).json({
+                        error: 'Dự án chờ duyệt chỉ được xem ở tab Quản lý dự án'
+                    });
+                }
             }
             accessibleProjectIds = [projectId as string];
         } else {
@@ -91,7 +99,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             filter['household.name'] = { $regex: search, $options: 'i' };
         }
 
-        filter.staffImportPending = { $ne: true };
+        if (!elevated) {
+            filter.staffImportPending = { $ne: true };
+        }
 
         const pageNum = parseInt(page as string) || 1;
         const rawLimit = parseInt(limit as string) || 50;

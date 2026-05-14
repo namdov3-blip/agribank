@@ -173,7 +173,6 @@ export const PdfDecisionScans: React.FC<PdfDecisionScansProps> = ({ currentUser,
             />
           </div>
         </div>
-        <p className="text-[11px] text-slate-500 mt-3">Dung lượng tối đa ~14MB / file. Chỉ định dạng PDF.</p>
       </GlassCard>
 
       <GlassCard className="p-0 overflow-hidden border-slate-200">

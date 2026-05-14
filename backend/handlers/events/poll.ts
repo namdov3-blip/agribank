@@ -3,7 +3,7 @@ import connectDB from '../../../lib/mongodb';
 import mongoose from 'mongoose';
 import { Transaction, BankTransaction, Project, User } from '../../../lib/models';
 import { authMiddleware } from '../../../lib/auth';
-import { getStaffHiddenReportProjectIds } from '../../../lib/mutation-policy';
+import { getStaffHiddenReportProjectIds, isElevatedRole } from '../../../lib/mutation-policy';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
     res.setHeader('Access-Control-Allow-Origin', '*');
@@ -37,6 +37,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
         // Build organization filter
         const isAdmin = payload.role === 'Admin' || payload.role === 'SuperAdmin' || currentUser.organization === 'Nam World';
+        const elevated = isElevatedRole(payload.role);
         const userOrg = currentUser.organization;
 
         const changes: any = {
@@ -44,7 +45,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         };
 
         const reportHiddenIds =
-            typeList.includes('transactions') || typeList.includes('bank')
+            !elevated && (typeList.includes('transactions') || typeList.includes('bank'))
                 ? await getStaffHiddenReportProjectIds(payload, currentUser as any)
                 : [];
 
@@ -54,7 +55,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             if (!isAdmin && userOrg) {
                 projectFilter.organization = userOrg;
             }
-            if (reportHiddenIds.length > 0) {
+            if (!elevated && reportHiddenIds.length > 0) {
                 projectFilter._id = {
                     $nin: reportHiddenIds.map((i) => new mongoose.Types.ObjectId(i))
                 };
@@ -62,11 +63,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             const accessibleProjects = await Project.find(projectFilter).select('_id');
             const projectIds = accessibleProjects.map(p => p._id);
 
-            const updatedTransactions = await Transaction.find({
+            const txQuery: Record<string, unknown> = {
                 projectId: { $in: projectIds },
-                updatedAt: { $gt: sinceDate },
-                staffImportPending: { $ne: true }
-            })
+                updatedAt: { $gt: sinceDate }
+            };
+            if (!elevated) {
+                txQuery.staffImportPending = { $ne: true };
+            }
+
+            const updatedTransactions = await Transaction.find(txQuery)
                 .populate('projectId', 'code name organization')
                 .sort({ updatedAt: -1 })
                 .limit(50);
@@ -80,12 +85,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             if (!isAdmin && userOrg) {
                 bankFilter.organization = userOrg;
             }
-            const pendingObjIds = reportHiddenIds.map((i) => new mongoose.Types.ObjectId(i));
-            bankFilter.$or = [
-                { projectId: { $exists: false } },
-                { projectId: null },
-                { projectId: { $nin: pendingObjIds } }
-            ];
+            if (!elevated && reportHiddenIds.length > 0) {
+                const pendingObjIds = reportHiddenIds.map((i) => new mongoose.Types.ObjectId(i));
+                bankFilter.$or = [
+                    { projectId: { $exists: false } },
+                    { projectId: null },
+                    { projectId: { $nin: pendingObjIds } }
+                ];
+            }
 
             const updatedBankTx = await BankTransaction.find(bankFilter)
                 .sort({ updatedAt: -1 })
