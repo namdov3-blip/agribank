@@ -1,7 +1,19 @@
 import React, { useRef, useState, useMemo } from 'react';
 import api from '../services/api';
 import { GlassCard } from '../components/GlassCard';
-import { formatDate, formatCurrency, calculateInterest, calculateInterestWithRateChange, exportProjectsToExcel, roundTo2, roundHalfUp, isElevatedWorkspaceRole } from '../utils/helpers';
+import {
+  formatDate,
+  formatDateDisplay,
+  formatCurrency,
+  calculateInterest,
+  calculateInterestWithRateChange,
+  exportProjectsToExcel,
+  roundTo2,
+  roundHalfUp,
+  isElevatedWorkspaceRole,
+  isTransactionCountedInReportingTotals,
+  transactionProjectIdString
+} from '../utils/helpers';
 import { Plus, FolderKanban, Coins, Loader2, X, Check, FileSpreadsheet, Edit2, Eye, Calendar, Save, Tag, Type, Trash2, Search, ChevronLeft, ChevronRight, Download, ShieldCheck, Lock, Unlock } from 'lucide-react';
 import { Project, Transaction, TransactionStatus, User } from '../types';
 
@@ -82,6 +94,18 @@ export const Projects: React.FC<ProjectsProps> = ({
         : transactions.filter((t) => !(t as { staffImportPending?: boolean }).staffImportPending),
     [transactions, elevated]
   );
+
+  const formatModalDate = React.useCallback((d: unknown): string => {
+    if (d == null || d === '') return '—';
+    try {
+      const s =
+        typeof d === 'string' ? d : d instanceof Date ? d.toISOString() : String(d);
+      const out = formatDateDisplay(s);
+      return out === '---' ? '—' : out;
+    } catch {
+      return '—';
+    }
+  }, []);
 
   const pendingTemplateCount = useMemo(() => {
     const ids = new Set<string>();
@@ -221,43 +245,57 @@ export const Projects: React.FC<ProjectsProps> = ({
     return calculateInterest(principal, interestRate, baseDate, endDate);
   }, [interestRate, interestRateChangeDate, interestRateBefore, interestRateAfter]);
 
-  // Helper function to calculate actual total budget for a project
-  const getProjectActualTotal = React.useCallback((project: Project): number => {
-    const projectTrans = transactionsForProjectMetrics(project);
-
-    const actualTotal = projectTrans.reduce((sum, t) => {
-      const supplementary = t.supplementaryAmount || 0;
-      
-      if (t.status === TransactionStatus.DISBURSED && (t as any).disbursedTotal) {
-        return sum + (t as any).disbursedTotal;
-      }
-      
-      const baseDate = t.effectiveInterestDate || project.interestStartDate;
-      let interest = 0;
-      if (t.status === TransactionStatus.DISBURSED && t.disbursementDate) {
-        interest = calculateInterestSmart(t.compensation.totalApproved, baseDate, new Date(t.disbursementDate));
-      } else if (t.status !== TransactionStatus.DISBURSED) {
-        interest = calculateInterestSmart(t.compensation.totalApproved, baseDate, new Date());
-      }
-      return sum + t.compensation.totalApproved + interest + supplementary;
-    }, 0);
-
-    if (actualTotal > 0) return actualTotal;
-    if (!elevated) return 0;
-    return project.totalBudget;
-  }, [transactionsForProjectMetrics, calculateInterestSmart, elevated]);
-
-  /** Chờ duyệt template hoặc có GD import chờ — không tính vào box Tổng giá trị dự án */
-  const isProjectPendingApproval = React.useCallback(
-    (p: Project) => {
-      if (p.templateApproved === false) return true;
-      return transactions.some(
-        (t) =>
-          String(t.projectId) === String(p.id) &&
-          !!(t as { staffImportPending?: boolean }).staffImportPending
-      );
+  /** GD được tính vào các box tổng hợp phía trên (khớp Tổng quan / Giao dịch / Số dư). */
+  const reportingTransactionsOnProject = React.useCallback(
+    (project: Project) => {
+      const pid = String(project.id ?? '');
+      const pAlt = String((project as { _id?: string })._id ?? '');
+      return transactions.filter((t) => {
+        const tPid = transactionProjectIdString(t);
+        if (!tPid || (tPid !== pid && tPid !== pAlt)) return false;
+        return isTransactionCountedInReportingTotals(t, projects);
+      });
     },
-    [transactions]
+    [transactions, projects]
+  );
+
+  const computeActualTotalFromTxs = React.useCallback(
+    (project: Project, projectTrans: Transaction[], allowBudgetFallback: boolean) => {
+      const actualTotal = projectTrans.reduce((sum, t) => {
+        const supplementary = t.supplementaryAmount || 0;
+
+        if (t.status === TransactionStatus.DISBURSED && (t as any).disbursedTotal) {
+          return sum + (t as any).disbursedTotal;
+        }
+
+        const baseDate = t.effectiveInterestDate || project.interestStartDate;
+        let interest = 0;
+        if (t.status === TransactionStatus.DISBURSED && t.disbursementDate) {
+          interest = calculateInterestSmart(t.compensation.totalApproved, baseDate, new Date(t.disbursementDate));
+        } else if (t.status !== TransactionStatus.DISBURSED) {
+          interest = calculateInterestSmart(t.compensation.totalApproved, baseDate, new Date());
+        }
+        return sum + t.compensation.totalApproved + interest + supplementary;
+      }, 0);
+
+      if (actualTotal > 0) return actualTotal;
+      if (!allowBudgetFallback) return 0;
+      if (!elevated) return 0;
+      return project.totalBudget;
+    },
+    [calculateInterestSmart, elevated]
+  );
+
+  const getProjectActualTotal = React.useCallback(
+    (project: Project): number =>
+      computeActualTotalFromTxs(project, transactionsForProjectMetrics(project), true),
+    [computeActualTotalFromTxs, transactionsForProjectMetrics]
+  );
+
+  const getProjectReportingAggregateTotal = React.useCallback(
+    (project: Project): number =>
+      computeActualTotalFromTxs(project, reportingTransactionsOnProject(project), false),
+    [computeActualTotalFromTxs, reportingTransactionsOnProject]
   );
 
   // Filter projects based on search term
@@ -309,22 +347,16 @@ export const Projects: React.FC<ProjectsProps> = ({
     setCurrentPage(1);
   }, [searchTerm]);
 
-  // Stats Calculation - tính tổng giá trị thực tế bao gồm tiền bổ sung + lãi phát sinh
-  const totalProjects = filteredProjects.length;
+  // Stats Calculation — box tổng hợp: chỉ GD đã duyệt (template + không GD import chờ duyệt)
+  const totalProjects = filteredProjects.filter((p) => p.templateApproved !== false).length;
 
-  // Tính tổng giá trị ban đầu (không có lãi, không có tiền bổ sung) - chỉ tính cho filtered projects
   const totalInitialValue = filteredProjects.reduce((acc, p) => {
-    if (isProjectPendingApproval(p)) return acc;
-    const projectTrans = transactionsForProjectMetrics(p);
+    const projectTrans = reportingTransactionsOnProject(p);
     const initialTotal = projectTrans.reduce((sum, t) => sum + t.compensation.totalApproved, 0);
-    return acc + (initialTotal > 0 ? initialTotal : elevated ? p.totalBudget : 0);
+    return acc + initialTotal;
   }, 0);
 
-  // Tính tổng giá trị hiện tại (bao gồm lãi + tiền bổ sung) — chỉ dự án đã duyệt (không chờ duyệt)
-  const totalValue = filteredProjects.reduce((acc, p) => {
-    if (isProjectPendingApproval(p)) return acc;
-    return acc + getProjectActualTotal(p);
-  }, 0);
+  const totalValue = filteredProjects.reduce((acc, p) => acc + getProjectReportingAggregateTotal(p), 0);
 
   const handleNewProjectClick = () => {
     fileInputRef.current?.click();
@@ -1155,11 +1187,11 @@ export const Projects: React.FC<ProjectsProps> = ({
       )}
 
       {approveTarget && (
-        <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
-          <GlassCard className="w-full max-w-4xl max-h-[90vh] overflow-hidden flex flex-col bg-white shadow-2xl border border-slate-200">
-            <div className="p-5 border-b border-slate-200 bg-emerald-50/80 flex justify-between items-start gap-3">
+        <div className="fixed inset-0 z-[70] flex items-center justify-center p-3 sm:p-4 bg-black/50 backdrop-blur-sm">
+          <GlassCard className="w-full max-w-[min(120rem,98vw)] max-h-[min(92vh,100dvh)] overflow-hidden flex flex-col bg-white shadow-2xl border border-slate-200">
+            <div className="p-6 sm:p-7 border-b border-slate-200 bg-emerald-50/80 flex justify-between items-start gap-3 shrink-0">
               <div>
-                <h3 className="text-lg font-black text-emerald-900">Xác nhận duyệt dự án / giao dịch import</h3>
+                <h3 className="text-xl sm:text-2xl font-black text-emerald-900">Xác nhận duyệt dự án / giao dịch import</h3>
                 <p className="text-sm font-bold text-slate-700 mt-1">
                   {approveTarget.code} — {approveTarget.name}
                 </p>
@@ -1177,7 +1209,7 @@ export const Projects: React.FC<ProjectsProps> = ({
               </button>
             </div>
 
-            <div className="flex-1 overflow-auto p-4">
+            <div className="flex-1 min-h-0 overflow-auto p-5 sm:p-6">
               {approvePreviewRows.length === 0 ? (
                 <p className="text-sm text-slate-600 font-medium text-center py-8">
                   Không có dòng giao dịch chi tiết trong bộ nhớ tạm — vẫn có thể duyệt hiển thị template dự án nếu đây là dự án chỉ chờ duyệt cấu hình.
@@ -1185,33 +1217,45 @@ export const Projects: React.FC<ProjectsProps> = ({
               ) : (
                 <>
                   <div className="overflow-x-auto rounded-lg border border-slate-200">
-                    <table className="w-full text-left text-xs border-collapse min-w-[720px]">
-                      <thead className="bg-slate-100 text-[10px] uppercase font-bold text-slate-600 border-b border-slate-200">
+                    <table className="w-full text-left text-sm border-collapse min-w-[1040px]">
+                      <thead className="bg-slate-100 text-[11px] uppercase font-bold text-slate-600 border-b border-slate-200">
                         <tr>
-                          <th className="px-3 py-2 border-r border-slate-200 text-center w-10">STT</th>
-                          <th className="px-3 py-2 border-r border-slate-200">Mã GD</th>
-                          <th className="px-3 py-2 border-r border-slate-200">Hộ / CCCD</th>
-                          <th className="px-3 py-2 border-r border-slate-200">Số QĐ</th>
-                          <th className="px-3 py-2 border-r border-slate-200">Loại chi</th>
-                          <th className="px-3 py-2 text-right border-r border-slate-200">Tổng phê duyệt</th>
-                          <th className="px-3 py-2 text-center">Trạng thái</th>
+                          <th className="px-3 py-2.5 border-r border-slate-200 text-center w-12">STT</th>
+                          <th className="px-3 py-2.5 border-r border-slate-200 min-w-[120px]">Mã GD</th>
+                          <th className="px-3 py-2.5 border-r border-slate-200 min-w-[180px]">Hộ / CCCD</th>
+                          <th className="px-3 py-2.5 border-r border-slate-200 min-w-[100px]">Số QĐ</th>
+                          <th className="px-3 py-2.5 border-r border-slate-200 min-w-[120px]">Loại chi</th>
+                          <th className="px-3 py-2.5 border-r border-slate-200 text-center whitespace-nowrap min-w-[110px]">Ngày upload</th>
+                          <th className="px-3 py-2.5 border-r border-slate-200 text-center whitespace-nowrap min-w-[110px]">Ngày giải ngân</th>
+                          <th className="px-3 py-2.5 text-right border-r border-slate-200 min-w-[120px]">Tổng phê duyệt</th>
+                          <th className="px-3 py-2.5 text-center min-w-[120px]">Trạng thái</th>
                         </tr>
                       </thead>
-                      <tbody className="divide-y divide-slate-200">
-                        {approvePreviewRows.map((t, idx) => (
+                      <tbody className="divide-y divide-slate-200 text-sm">
+                        {approvePreviewRows.map((t, idx) => {
+                          const tx = t as Transaction & { createdAt?: string; uploadDate?: string };
+                          const uploadRaw =
+                            tx.uploadDate ?? tx.createdAt ?? approveTarget.uploadDate;
+                          return (
                           <tr key={t.id} className="hover:bg-slate-50/80">
-                            <td className="px-3 py-2 border-r border-slate-100 text-center font-bold text-slate-500">{idx + 1}</td>
-                            <td className="px-3 py-2 border-r border-slate-100 font-mono text-[10px] text-slate-700">{t.id}</td>
-                            <td className="px-3 py-2 border-r border-slate-100">
+                            <td className="px-3 py-2.5 border-r border-slate-100 text-center font-bold text-slate-500">{idx + 1}</td>
+                            <td className="px-3 py-2.5 border-r border-slate-100 font-mono text-xs text-slate-700">{t.id}</td>
+                            <td className="px-3 py-2.5 border-r border-slate-100">
                               <span className="font-bold text-slate-800">{t.household?.name || '—'}</span>
-                              <span className="block text-[10px] text-slate-500 font-mono">{t.household?.cccd || '—'}</span>
+                              <span className="block text-xs text-slate-500 font-mono">{t.household?.cccd || '—'}</span>
                             </td>
-                            <td className="px-3 py-2 border-r border-slate-100">{t.household?.decisionNumber || '—'}</td>
-                            <td className="px-3 py-2 border-r border-slate-100">{t.paymentType || '—'}</td>
-                            <td className="px-3 py-2 text-right font-bold text-emerald-800 border-r border-slate-100">
+                            <td className="px-3 py-2.5 border-r border-slate-100">{t.household?.decisionNumber || '—'}</td>
+                            <td className="px-3 py-2.5 border-r border-slate-100">{t.paymentType || '—'}</td>
+                            <td className="px-3 py-2.5 border-r border-slate-100 text-center text-slate-800 whitespace-nowrap">
+                              {formatModalDate(uploadRaw)}
+                            </td>
+                            <td className="px-3 py-2.5 border-r border-slate-100 text-center text-slate-800 whitespace-nowrap">
+                              {tx.disbursementDate ? formatModalDate(tx.disbursementDate) : '—'}
+                            </td>
+                            <td className="px-3 py-2.5 text-right font-bold text-emerald-800 border-r border-slate-100">
                               {formatCurrency(t.compensation?.totalApproved || 0)}
                             </td>
-                            <td className="px-3 py-2 text-center text-[10px] font-bold">
+                            <td className="px-3 py-2.5 text-center text-xs font-bold">
                               {(t as { staffImportPending?: boolean }).staffImportPending ? (
                                 <span className="text-amber-800 bg-amber-100 px-2 py-0.5 rounded border border-amber-200">Chờ duyệt import</span>
                               ) : (
@@ -1219,15 +1263,16 @@ export const Projects: React.FC<ProjectsProps> = ({
                               )}
                             </td>
                           </tr>
-                        ))}
+                          );
+                        })}
                       </tbody>
                     </table>
                   </div>
-                  <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-emerald-200 bg-emerald-50/50 px-4 py-3">
-                    <div className="text-sm font-bold text-slate-800">
+                  <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-emerald-200 bg-emerald-50/50 px-5 py-3.5">
+                    <div className="text-sm sm:text-base font-bold text-slate-800">
                       Tổng số hồ sơ: <span className="text-emerald-900">{approvePreviewRows.length}</span>
                     </div>
-                    <div className="text-sm font-black text-emerald-900">
+                    <div className="text-sm sm:text-base font-black text-emerald-900">
                       Tổng tiền phê duyệt: {formatCurrency(approvePreviewTotal)}
                     </div>
                   </div>
@@ -1235,7 +1280,7 @@ export const Projects: React.FC<ProjectsProps> = ({
               )}
             </div>
 
-            <div className="p-4 border-t border-slate-200 bg-slate-50 flex flex-wrap justify-end gap-2">
+            <div className="p-5 sm:p-6 border-t border-slate-200 bg-slate-50 flex flex-wrap justify-end gap-2 shrink-0">
               {rejectablePendingCount > 0 && (
                 <button
                   type="button"

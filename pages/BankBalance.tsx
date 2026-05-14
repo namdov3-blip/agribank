@@ -22,7 +22,9 @@ import {
   exportBalanceProjectDetailToExcel,
   toVNTime,
   getVNStartOfDay,
-  getVNEndOfDay
+  getVNEndOfDay,
+  transactionProjectIdString,
+  resolveProjectByTransactionProjectId
 } from '../utils/helpers';
 import {
   Wallet, History, X, Table2, ChevronLeft, ChevronRight, Download, Search
@@ -46,20 +48,8 @@ interface BankBalanceProps {
 
 const DETAIL_PROJECTS_PAGE_SIZE = 10;
 
-function transactionProjectIdString(t: Transaction): string | null {
-  const raw = t.projectId;
-  if (raw === undefined || raw === null) return null;
-  if (typeof raw === 'object') {
-    const o = raw as { _id?: unknown; id?: unknown };
-    const id = o._id ?? o.id;
-    return id !== undefined && id !== null ? String(id) : null;
-  }
-  const s = String(raw).trim();
-  return s.length > 0 ? s : null;
-}
-
 function resolveProject(projects: Project[], pidStr: string): Project | undefined {
-  return projects.find((p) => String(p.id) === pidStr || String((p as { _id?: string })._id) === pidStr);
+  return resolveProjectByTransactionProjectId(projects, pidStr);
 }
 
 /** Giao dịch có ít nhất một mốc ngày liên quan nằm trong [start, end] (VN). Giải ngân: theo ngày GN; còn lại: quyết định / lãi / lịch sử rút. */

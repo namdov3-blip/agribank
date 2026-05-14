@@ -8,6 +8,44 @@ export function isElevatedWorkspaceRole(role: User['role'] | string | undefined)
     return key === 'superadmin' || key === 'admin' || key === 'chiefaccountant';
 }
 
+/** Chuẩn hóa projectId trên giao dịch (chuỗi hoặc populate {_id}). */
+export function transactionProjectIdString(t: Transaction): string | null {
+    const raw = t.projectId as unknown;
+    if (raw === undefined || raw === null) return null;
+    if (typeof raw === 'object') {
+        const o = raw as { _id?: unknown; id?: unknown };
+        const id = o._id ?? o.id;
+        return id !== undefined && id !== null ? String(id) : null;
+    }
+    const s = String(raw).trim();
+    return s.length > 0 ? s : null;
+}
+
+export function resolveProjectByTransactionProjectId(
+    projects: Project[],
+    pidStr: string | null
+): Project | undefined {
+    if (!pidStr) return undefined;
+    return projects.find(
+        (p) => String(p.id) === pidStr || String((p as { _id?: string })._id) === pidStr
+    );
+}
+
+/**
+ * Giao dịch được tính vào các box tổng hợp (Tổng quan, Quản lý dự án, Giao dịch, Số dư):
+ * không có GD import/merge chờ duyệt; không thuộc dự án template chưa duyệt.
+ */
+export function isTransactionCountedInReportingTotals(
+    t: Transaction,
+    projects: Project[]
+): boolean {
+    if ((t as { staffImportPending?: boolean }).staffImportPending) return false;
+    const pid = transactionProjectIdString(t);
+    const p = resolveProjectByTransactionProjectId(projects, pid);
+    if (p && p.templateApproved === false) return false;
+    return true;
+}
+
 /**
  * SuperAdmin / Admin: mặc định thấy mọi tab trên sidebar.
  * Kế toán trưởng không áp dụng — phải bật từng tab trong «Phân quyền truy cập tab» (gồm cả Admin nếu cần).

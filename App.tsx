@@ -27,10 +27,11 @@ import {
   BankTransactionType
 } from './types';
 import {
-  calculateInterest,
   formatCurrency,
   isStaffEditingPolicyExempt,
-  userCanAccessAdminWorkspaceTab
+  userCanAccessAdminWorkspaceTab,
+  isTransactionCountedInReportingTotals,
+  transactionProjectIdString
 } from './utils/helpers';
 
 // --- SESSION SETTINGS ---
@@ -84,25 +85,27 @@ const App: React.FC = () => {
   const [interestRateAfter, setInterestRateAfter] = useState<number | null>(null);
   const [editingAllowed, setEditingAllowed] = useState(true);
 
-  /** DA đã được tính vào báo cáo (mọi role): không chờ template, không chỉ có GD chờ duyệt import */
+  /** DA có ít nhất một GD được tính vào báo cáo (đã duyệt template; không chỉ GD import chờ duyệt). */
   const reportingProjects = useMemo(() => {
     if (!currentUser) return projects;
     return projects.filter((p) => {
       if (p.templateApproved === false) return false;
-      const hasStaffPending = transactions.some(
-        (t) =>
-          String(t.projectId) === String(p.id) &&
-          !!(t as { staffImportPending?: boolean }).staffImportPending
-      );
-      if (hasStaffPending) return false;
-      return transactions.some((t) => String(t.projectId) === String(p.id));
+      return transactions.some((t) => {
+        if (!isTransactionCountedInReportingTotals(t, projects)) return false;
+        const pid = transactionProjectIdString(t);
+        if (!pid) return false;
+        return String(p.id) === pid || String((p as { _id?: string })._id) === pid;
+      });
     });
   }, [projects, transactions, currentUser]);
 
-  /** Tab Giao dịch: ẩn toàn bộ GD import/merge đang chờ duyệt (chỉ duyệt/từ chối tại Quản lý dự án). */
+  /**
+   * Tab Giao dịch + tổng hợp Tổng quan/Số dư: chỉ GD đã được tính báo cáo
+   * (không GD merge/import chờ duyệt; không thuộc DA template chưa duyệt).
+   */
   const transactionsTabList = useMemo(
-    () => transactions.filter((t) => !(t as { staffImportPending?: boolean }).staffImportPending),
-    [transactions]
+    () => transactions.filter((t) => isTransactionCountedInReportingTotals(t, projects)),
+    [transactions, projects]
   );
 
   const mayFetchAdminBundles = useCallback((viewer?: User | null) => {
@@ -443,7 +446,7 @@ const App: React.FC = () => {
     switch (activeTab) {
       case 'dashboard':
         return <Dashboard
-          transactions={transactions}
+          transactions={transactionsTabList}
           projects={reportingProjects}
           interestRate={interestRate}
           interestRateChangeDate={interestRateChangeDate}
@@ -496,7 +499,7 @@ const App: React.FC = () => {
         />;
       case 'balance':
         return <BankBalance
-          transactions={transactions}
+          transactions={transactionsTabList}
           projects={reportingProjects}
           bankAccount={bankAccount}
           bankTransactions={bankTransactions}
