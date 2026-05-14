@@ -72,6 +72,14 @@ export const TransactionList: React.FC<TransactionListProps> = ({
     return false;
   }, [selectedTransactions, transactions, resolveProject]);
 
+  const selectedTouchesImportPending = useMemo(() => {
+    for (const id of selectedTransactions) {
+      const t = transactions.find((tx) => tx.id === id);
+      if (t && (t as { staffImportPending?: boolean }).staffImportPending) return true;
+    }
+    return false;
+  }, [selectedTransactions, transactions]);
+
   const getRelevantDate = React.useCallback((t: Transaction, projectParam?: Project) => {
     const project = projectParam || resolveProject(t);
     // ALWAYS return the interest start date for filtering, regardless of disbursement status
@@ -498,10 +506,14 @@ export const TransactionList: React.FC<TransactionListProps> = ({
                 </button>
                 <button
                   type="button"
-                  disabled={readOnlyStaff || selectedTouchesLockedProject}
+                  disabled={readOnlyStaff || selectedTouchesLockedProject || selectedTouchesImportPending}
                   onClick={async () => {
                     if (readOnlyStaff) {
                       alert('Hệ thống đang khóa chỉnh sửa.');
+                      return;
+                    }
+                    if (selectedTouchesImportPending) {
+                      alert('Trong các dòng đã chọn có hồ sơ import/merge chờ duyệt — không thể giải ngân hàng loạt. Bỏ chọn các dòng đó hoặc đợi Kế toán trưởng duyệt tại Quản lý dự án.');
                       return;
                     }
                     if (selectedTouchesLockedProject) {
@@ -510,7 +522,11 @@ export const TransactionList: React.FC<TransactionListProps> = ({
                     }
                     const pendingIds = Array.from(selectedTransactions).filter(id => {
                       const t = transactions.find(tx => tx.id === id);
-                      return t && t.status !== TransactionStatus.DISBURSED;
+                      return (
+                        t &&
+                        t.status !== TransactionStatus.DISBURSED &&
+                        !(t as { staffImportPending?: boolean }).staffImportPending
+                      );
                     });
 
                     if (pendingIds.length === 0) {
@@ -559,10 +575,14 @@ export const TransactionList: React.FC<TransactionListProps> = ({
                 </button>
                 <button
                   type="button"
-                  disabled={readOnlyStaff || selectedTouchesLockedProject}
+                  disabled={readOnlyStaff || selectedTouchesLockedProject || selectedTouchesImportPending}
                   onClick={async () => {
                     if (readOnlyStaff) {
                       alert('Hệ thống đang khóa chỉnh sửa.');
+                      return;
+                    }
+                    if (selectedTouchesImportPending) {
+                      alert('Trong các dòng đã chọn có hồ sơ import/merge chờ duyệt — không thể xóa. Bỏ chọn các dòng đó hoặc đợi Kế toán trưởng duyệt tại Quản lý dự án.');
                       return;
                     }
                     if (selectedTouchesLockedProject) {
@@ -678,15 +698,29 @@ export const TransactionList: React.FC<TransactionListProps> = ({
                 <th className="px-4 py-3.5 border-r border-slate-200 text-center w-12">
                   <input
                     type="checkbox"
-                    checked={paginatedData.length > 0 && paginatedData.every(t => selectedTransactions.has(t.id))}
+                    checked={
+                      (() => {
+                        const selectable = paginatedData.filter(
+                          (t) => !(t as { staffImportPending?: boolean }).staffImportPending
+                        );
+                        return (
+                          selectable.length > 0 &&
+                          selectable.every((t) => selectedTransactions.has(t.id))
+                        );
+                      })()
+                    }
                     onChange={(e) => {
                       if (e.target.checked) {
                         const newSet = new Set(selectedTransactions);
-                        paginatedData.forEach(t => newSet.add(t.id));
+                        paginatedData.forEach((t) => {
+                          if (!(t as { staffImportPending?: boolean }).staffImportPending) {
+                            newSet.add(t.id);
+                          }
+                        });
                         setSelectedTransactions(newSet);
                       } else {
                         const newSet = new Set(selectedTransactions);
-                        paginatedData.forEach(t => newSet.delete(t.id));
+                        paginatedData.forEach((t) => newSet.delete(t.id));
                         setSelectedTransactions(newSet);
                       }
                     }}
@@ -715,6 +749,7 @@ export const TransactionList: React.FC<TransactionListProps> = ({
 
                 const project = resolveProject(t);
                 const projectTxLocked = project?.transactionsLocked === true;
+                const txImportPending = !!(t as { staffImportPending?: boolean }).staffImportPending;
                 // Use effective status at filter time
                 const effectiveStatus = getEffectiveStatus(t);
                 const isDisbursed = effectiveStatus === TransactionStatus.DISBURSED;
@@ -797,8 +832,14 @@ export const TransactionList: React.FC<TransactionListProps> = ({
                     <td className="px-4 py-3 border-r border-slate-200 text-center" onClick={(e) => e.stopPropagation()}>
                       <input
                         type="checkbox"
-                        disabled={readOnlyStaff || projectTxLocked}
-                        title={projectTxLocked ? 'Dự án đang khóa giao dịch' : undefined}
+                        disabled={readOnlyStaff || projectTxLocked || txImportPending}
+                        title={
+                          txImportPending
+                            ? 'Hồ sơ import/merge chờ duyệt — không chọn hàng loạt'
+                            : projectTxLocked
+                              ? 'Dự án đang khóa giao dịch'
+                              : undefined
+                        }
                         checked={selectedTransactions.has(t.id)}
                         onChange={(e) => {
                           e.stopPropagation();
@@ -830,6 +871,11 @@ export const TransactionList: React.FC<TransactionListProps> = ({
                         {projectTxLocked && (
                           <span className="text-[9px] font-bold uppercase tracking-wide text-rose-700 bg-rose-50 border border-rose-200 px-1.5 py-0.5 rounded">
                             Dự án khóa GD
+                          </span>
+                        )}
+                        {txImportPending && (
+                          <span className="text-[9px] font-bold uppercase tracking-wide text-amber-800 bg-amber-100 border border-amber-200 px-1.5 py-0.5 rounded">
+                            Chờ duyệt import
                           </span>
                         )}
                       </div>

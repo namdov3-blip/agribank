@@ -2,7 +2,11 @@ import { VercelRequest, VercelResponse } from '@vercel/node';
 import connectDB from '../../../lib/mongodb';
 import { Transaction, Project, BankTransaction, AuditLog, Settings } from '../../../lib/models';
 import { authMiddleware } from '../../../lib/auth';
-import { assertStaffMayMutate, assertProjectTransactionsUnlockedForWrite } from '../../../lib/mutation-policy';
+import {
+    assertStaffMayMutate,
+    assertProjectTransactionsUnlockedForWrite,
+    assertTransactionNotStaffImportPending
+} from '../../../lib/mutation-policy';
 import { toZonedTime, format as formatTz } from 'date-fns-tz';
 import { calculateInterest, calculateInterestWithRateChange, getVNStartOfDay } from '../../../lib/utils/interest';
 
@@ -55,6 +59,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }
 
         if (!(await assertProjectTransactionsUnlockedForWrite(transaction.projectId, res))) return;
+        if (!assertTransactionNotStaffImportPending(transaction, res)) return;
 
         const project = await (Project as any).findById(transaction.projectId);
         const settings = await (Settings as any).findOne({ key: 'global' }) || { interestRate: 6.5 };

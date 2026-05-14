@@ -2,7 +2,11 @@ import { VercelRequest, VercelResponse } from '@vercel/node';
 import connectDB from '../../../lib/mongodb';
 import { Transaction, Project, AuditLog, Settings, BankTransaction, User } from '../../../lib/models';
 import { authMiddleware } from '../../../lib/auth';
-import { assertStaffMayMutate, assertProjectTransactionsUnlockedForWrite } from '../../../lib/mutation-policy';
+import {
+    assertStaffMayMutate,
+    assertProjectTransactionsUnlockedForWrite,
+    assertTransactionNotStaffImportPending
+} from '../../../lib/mutation-policy';
 import { calculateInterest } from '../../../lib/utils/interest';
 
 // Helper to format currency
@@ -104,6 +108,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             }
 
             if (!(await assertProjectTransactionsUnlockedForWrite(transaction.projectId, res))) return;
+            if (!assertTransactionNotStaffImportPending(transaction, res)) return;
 
             // Update fields
             if (household) {
@@ -183,6 +188,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             }
 
             if (!(await assertProjectTransactionsUnlockedForWrite(transaction.projectId, res))) return;
+            if (!assertTransactionNotStaffImportPending(transaction, res)) return;
 
             // Get project and user organization
             const project = await (Project as any).findById(transaction.projectId);

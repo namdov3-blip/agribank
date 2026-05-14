@@ -2,7 +2,11 @@ import { VercelRequest, VercelResponse } from '@vercel/node';
 import connectDB from '../../../lib/mongodb';
 import { Transaction, Project, AuditLog, BankTransaction, User } from '../../../lib/models';
 import { authMiddleware } from '../../../lib/auth';
-import { assertStaffMayMutate, assertProjectTransactionsUnlockedForWrite } from '../../../lib/mutation-policy';
+import {
+    assertStaffMayMutate,
+    assertProjectTransactionsUnlockedForWrite,
+    assertTransactionNotStaffImportPending
+} from '../../../lib/mutation-policy';
 import { toZonedTime, format as formatTz } from 'date-fns-tz';
 import { getVNStartOfDay } from '../../../lib/utils/interest';
 import { fromVNTime } from '../../../utils/helpers';
@@ -53,6 +57,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }
 
         if (!(await assertProjectTransactionsUnlockedForWrite(transaction.projectId, res))) return;
+        if (!assertTransactionNotStaffImportPending(transaction, res)) return;
 
         // Không cho bổ sung nếu đã giải ngân hoàn toàn
         if (transaction.status === 'Đã giải ngân') {

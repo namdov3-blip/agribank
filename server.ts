@@ -79,6 +79,10 @@ app.post('/api/projects/:id/approve-template', (req, res) => {
     Object.assign(req.query, { projectId: req.params.id });
     handle(req, res, './backend/handlers/projects/approve-template');
 });
+app.post('/api/projects/:id/reject-pending-import', (req, res) => {
+    Object.assign(req.query, { projectId: req.params.id });
+    handle(req, res, './backend/handlers/projects/reject-pending-import');
+});
 app.post('/api/projects/:id/transactions-lock', (req, res) => {
     Object.assign(req.query, { projectId: req.params.id });
     handle(req, res, './backend/handlers/projects/transactions-lock');

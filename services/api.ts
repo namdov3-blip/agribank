@@ -153,6 +153,9 @@ export const projectsAPI = {
     approveTemplate: (id: string) =>
         fetchAPI<{ data: any }>(`/projects/${id}/approve-template`, { method: 'POST' }),
 
+    rejectPendingImport: (id: string) =>
+        fetchAPI<{ data: any }>(`/projects/${id}/reject-pending-import`, { method: 'POST' }),
+
     setTransactionsLock: (id: string, locked: boolean) =>
         fetchAPI<{ data: any }>(`/projects/${id}/transactions-lock`, {
             method: 'POST',

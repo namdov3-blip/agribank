@@ -54,6 +54,21 @@ export async function assertProjectTransactionsUnlockedForWrite(
     return true;
 }
 
+/** Giao dịch import/merge chờ KTT duyệt — chặn mọi thao tác ghi cho đến khi duyệt tại Quản lý dự án. */
+export function assertTransactionNotStaffImportPending(
+    transaction: { staffImportPending?: boolean } | null | undefined,
+    res: VercelResponse
+): boolean {
+    if (transaction && (transaction as { staffImportPending?: boolean }).staffImportPending === true) {
+        res.status(403).json({
+            error:
+                'Giao dịch đang chờ duyệt import/merge — không được sửa, xóa hay đổi trạng thái cho đến khi Kế toán trưởng / Admin / SuperAdmin duyệt tại tab Quản lý dự án.'
+        });
+        return false;
+    }
+    return true;
+}
+
 /** undefined / missing trong DB được coi là true (backward compatible) */
 export function isEditingAllowedFlag(value: unknown): boolean {
     return value !== false;

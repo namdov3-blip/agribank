@@ -70,10 +70,15 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
   if (!transaction) return null;
 
   const projectTransactionsLocked = project?.transactionsLocked === true;
+  const importMergePending = (transaction as { staffImportPending?: boolean }).staffImportPending === true;
 
   const blockIfReadOnly = (): boolean => {
     if (readOnlyStaff) {
       alert('Hệ thống đang khóa chỉnh sửa đối với tài khoản của bạn. Liên hệ Kế toán trưởng hoặc Admin.');
+      return true;
+    }
+    if (importMergePending) {
+      alert('Giao dịch import/merge đang chờ Kế toán trưởng / Admin duyệt tại tab Quản lý dự án — không được chỉnh sửa cho đến khi duyệt.');
       return true;
     }
     if (projectTransactionsLocked) {
@@ -83,7 +88,7 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
     return false;
   };
 
-  const effectiveReadOnly = readOnlyStaff || projectTransactionsLocked;
+  const effectiveReadOnly = readOnlyStaff || projectTransactionsLocked || importMergePending;
 
   // Initialize edited transaction
   React.useEffect(() => {
@@ -123,6 +128,10 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
       
       // Init refund date input
       setRefundDateInput(`${year}-${month}-${day}`);
+
+      if ((transaction as { staffImportPending?: boolean }).staffImportPending) {
+        setIsEditingDetails(false);
+      }
     }
   }, [transaction]);
 
@@ -673,16 +682,23 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
       {/* --- WEB UI --- */}
       <GlassCard className="w-full max-w-4xl max-h-[90vh] overflow-hidden flex flex-col relative bg-white/95 border-slate-300 shadow-2xl ring-1 ring-black/5 no-print">
 
-        {(readOnlyStaff || projectTransactionsLocked) && (
+        {(readOnlyStaff || projectTransactionsLocked || importMergePending) && (
           <div
             className={`px-4 py-2 border-b text-xs font-bold text-center ${
-              projectTransactionsLocked
-                ? 'bg-rose-50 border-rose-200 text-rose-900'
-                : 'bg-amber-50 border-amber-200 text-amber-900'
+              importMergePending
+                ? 'bg-amber-50 border-amber-200 text-amber-950'
+                : projectTransactionsLocked
+                  ? 'bg-rose-50 border-rose-200 text-rose-900'
+                  : 'bg-amber-50 border-amber-200 text-amber-900'
             }`}
           >
             {readOnlyStaff && (
               <span className="block">Chỉ xem — Admin / Kế toán trưởng đã khóa chỉnh sửa đối với tài khoản của bạn.</span>
+            )}
+            {importMergePending && (
+              <span className="block mt-1">
+                Hồ sơ import/merge chờ duyệt — chỉ xem, không chỉnh sửa / giải ngân / rút / bổ sung cho đến khi Kế toán trưởng hoặc Admin duyệt tại tab Quản lý dự án.
+              </span>
             )}
             {projectTransactionsLocked && (
               <span className="block mt-1">

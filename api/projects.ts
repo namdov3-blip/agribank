@@ -3,6 +3,7 @@ import projectsIndex from '../backend/handlers/projects/index';
 import projectsImport from '../backend/handlers/projects/import';
 import projectsId from '../backend/handlers/projects/_id';
 import approveTemplate from '../backend/handlers/projects/approve-template';
+import rejectPendingImport from '../backend/handlers/projects/reject-pending-import';
 import transactionsLock from '../backend/handlers/projects/transactions-lock';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -18,6 +19,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         if (projectId && segments[segments.length - 1] === 'approve-template') {
             req.query = { ...req.query, projectId };
             return await approveTemplate(req, res);
+        }
+    }
+
+    if (path.endsWith('/reject-pending-import')) {
+        const segments = path.split('/').filter(Boolean);
+        const projectId = segments[segments.length - 2];
+        if (projectId && segments[segments.length - 1] === 'reject-pending-import') {
+            req.query = { ...req.query, projectId };
+            return await rejectPendingImport(req, res);
         }
     }
 

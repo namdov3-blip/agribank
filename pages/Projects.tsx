@@ -51,7 +51,37 @@ export const Projects: React.FC<ProjectsProps> = ({
   currentUser = null,
   onApproveTemplateDone
 }) => {
+  const [approveTarget, setApproveTarget] = useState<Project | null>(null);
+  const [approveSubmitting, setApproveSubmitting] = useState(false);
+  const [rejectSubmitting, setRejectSubmitting] = useState(false);
   const elevated = !!(currentUser && isElevatedWorkspaceRole(currentUser.role));
+
+  /** User thường: không đưa GD merge/import chờ duyệt vào tổng & tiến độ dự án (vẫn xem được GD cũ). */
+  const transactionsForProjectMetrics = React.useCallback(
+    (project: Project) => {
+      const pid = String(project.id ?? '');
+      const pAlt = String((project as { _id?: string })._id ?? '');
+      return transactions.filter((t) => {
+        const pIdStr =
+          t.projectId && (t.projectId as { _id?: unknown })._id
+            ? String((t.projectId as { _id: unknown })._id)
+            : String(t.projectId ?? '');
+        const match = pIdStr === pid || pIdStr === pAlt;
+        if (!match) return false;
+        if (!elevated && (t as { staffImportPending?: boolean }).staffImportPending) return false;
+        return true;
+      });
+    },
+    [transactions, elevated]
+  );
+
+  const transactionsForExport = useMemo(
+    () =>
+      elevated
+        ? transactions
+        : transactions.filter((t) => !(t as { staffImportPending?: boolean }).staffImportPending),
+    [transactions, elevated]
+  );
 
   const pendingTemplateCount = useMemo(() => {
     const ids = new Set<string>();
@@ -66,14 +96,80 @@ export const Projects: React.FC<ProjectsProps> = ({
     return ids.size;
   }, [projects, transactions]);
 
-  const handleApproveTemplate = async (proj: Project) => {
+  const txProjectIdStr = React.useCallback((t: Transaction) => {
+    const raw = t.projectId as unknown;
+    if (raw && typeof raw === 'object' && '_id' in (raw as Record<string, unknown>)) {
+      return String((raw as { _id: unknown })._id);
+    }
+    return String(raw ?? '');
+  }, []);
+
+  const approvePreviewRows = useMemo(() => {
+    if (!approveTarget?.id) return [];
+    const pid = String(approveTarget.id);
+    const pAlt = String((approveTarget as { _id?: string })._id ?? '');
+    const projectTxs = transactions.filter((t) => {
+      const tid = txProjectIdStr(t);
+      return tid === pid || tid === pAlt;
+    });
+    const pending = projectTxs.filter((t) => !!(t as { staffImportPending?: boolean }).staffImportPending);
+    if (pending.length > 0) return pending;
+    if (approveTarget.templateApproved === false) return projectTxs;
+    return pending;
+  }, [approveTarget, transactions, txProjectIdStr]);
+
+  const approvePreviewTotal = useMemo(
+    () => approvePreviewRows.reduce((s, t) => s + (t.compensation?.totalApproved || 0), 0),
+    [approvePreviewRows]
+  );
+
+  const rejectablePendingCount = useMemo(() => {
+    if (!approveTarget?.id) return 0;
+    const pid = String(approveTarget.id);
+    const pAlt = String((approveTarget as { _id?: string })._id ?? '');
+    return transactions.filter((t) => {
+      const tid = txProjectIdStr(t);
+      const match = tid === pid || tid === pAlt;
+      return match && !!(t as { staffImportPending?: boolean }).staffImportPending;
+    }).length;
+  }, [approveTarget, transactions, txProjectIdStr]);
+
+  const openApproveDialog = (proj: Project) => {
     if (!elevated || !proj.id) return;
-    if (!window.confirm(`Duyệt template cho dự án "${proj.code}"?\nSau khi duyệt, mọi user đơn vị sẽ thấy dự án và số liệu trong báo cáo.`)) return;
+    setApproveTarget(proj);
+  };
+
+  const confirmApproveTemplate = async () => {
+    if (!approveTarget?.id) return;
+    setApproveSubmitting(true);
     try {
-      await api.projects.approveTemplate(proj.id);
+      await api.projects.approveTemplate(approveTarget.id);
+      setApproveTarget(null);
       await onApproveTemplateDone?.();
-    } catch (e: any) {
-      alert(e?.message || 'Duyệt thất bại');
+    } catch (e: unknown) {
+      const err = e as { message?: string };
+      alert(err?.message || 'Duyệt thất bại');
+    } finally {
+      setApproveSubmitting(false);
+    }
+  };
+
+  const confirmRejectPendingImport = async () => {
+    if (!approveTarget?.id || rejectablePendingCount === 0) return;
+    const msg =
+      `Từ chối và XÓA VĨNH VIỄN ${rejectablePendingCount} hồ sơ import/merge đang chờ duyệt?\n\n` +
+      `Số tiền đã nạp quỹ tương ứng sẽ được hoàn trừ trên sổ ngân hàng. Thao tác không thể hoàn tác.`;
+    if (!window.confirm(msg)) return;
+    setRejectSubmitting(true);
+    try {
+      await api.projects.rejectPendingImport(approveTarget.id);
+      setApproveTarget(null);
+      await onApproveTemplateDone?.();
+    } catch (e: unknown) {
+      const err = e as { message?: string };
+      alert(err?.message || 'Từ chối thất bại');
+    } finally {
+      setRejectSubmitting(false);
     }
   };
 
@@ -127,11 +223,8 @@ export const Projects: React.FC<ProjectsProps> = ({
 
   // Helper function to calculate actual total budget for a project
   const getProjectActualTotal = React.useCallback((project: Project): number => {
-    const projectTrans = transactions.filter(t => {
-      const pIdStr = (t.projectId && (t.projectId as any)._id) ? (t.projectId as any)._id.toString() : t.projectId?.toString();
-      return pIdStr === project.id || pIdStr === (project as any)._id;
-    });
-    
+    const projectTrans = transactionsForProjectMetrics(project);
+
     const actualTotal = projectTrans.reduce((sum, t) => {
       const supplementary = t.supplementaryAmount || 0;
       
@@ -148,9 +241,11 @@ export const Projects: React.FC<ProjectsProps> = ({
       }
       return sum + t.compensation.totalApproved + interest + supplementary;
     }, 0);
-    
-    return actualTotal > 0 ? actualTotal : project.totalBudget;
-  }, [transactions, calculateInterestSmart]);
+
+    if (actualTotal > 0) return actualTotal;
+    if (!elevated) return 0;
+    return project.totalBudget;
+  }, [transactionsForProjectMetrics, calculateInterestSmart, elevated]);
 
   /** Chờ duyệt template hoặc có GD import chờ — không tính vào box Tổng giá trị dự án */
   const isProjectPendingApproval = React.useCallback(
@@ -220,12 +315,9 @@ export const Projects: React.FC<ProjectsProps> = ({
   // Tính tổng giá trị ban đầu (không có lãi, không có tiền bổ sung) - chỉ tính cho filtered projects
   const totalInitialValue = filteredProjects.reduce((acc, p) => {
     if (isProjectPendingApproval(p)) return acc;
-    const projectTrans = transactions.filter(t => {
-      const pIdStr = (t.projectId && (t.projectId as any)._id) ? (t.projectId as any)._id.toString() : t.projectId?.toString();
-      return pIdStr === p.id || pIdStr === (p as any)._id;
-    });
+    const projectTrans = transactionsForProjectMetrics(p);
     const initialTotal = projectTrans.reduce((sum, t) => sum + t.compensation.totalApproved, 0);
-    return acc + (initialTotal > 0 ? initialTotal : p.totalBudget);
+    return acc + (initialTotal > 0 ? initialTotal : elevated ? p.totalBudget : 0);
   }, 0);
 
   // Tính tổng giá trị hiện tại (bao gồm lãi + tiền bổ sung) — chỉ dự án đã duyệt (không chờ duyệt)
@@ -509,7 +601,7 @@ export const Projects: React.FC<ProjectsProps> = ({
               />
             </div>
             <button
-              onClick={() => exportProjectsToExcel(filteredProjects, transactions, interestRate, interestRateChangeDate, interestRateBefore, interestRateAfter)}
+              onClick={() => exportProjectsToExcel(filteredProjects, transactionsForExport, interestRate, interestRateChangeDate, interestRateBefore, interestRateAfter)}
               className="p-2 bg-white/60 hover:bg-white border border-slate-200 rounded-lg text-slate-600 transition-all shadow-sm group"
               title="Tải xuống Excel"
             >
@@ -554,11 +646,8 @@ export const Projects: React.FC<ProjectsProps> = ({
             </thead>
             <tbody className="divide-y divide-slate-300">
               {paginatedProjects.map((project, index) => {
-                // Calculate Progress - bao gồm cả tiền bổ sung + lãi phát sinh
-                const projectTrans = transactions.filter(t => {
-                  const pIdStr = (t.projectId && (t.projectId as any)._id) ? (t.projectId as any)._id.toString() : t.projectId?.toString();
-                  return pIdStr === project.id || pIdStr === (project as any)._id;
-                });
+                // Calculate Progress - bao gồm cả tiền bổ sung + lãi phát sinh (user thường: không tính GD merge chờ duyệt)
+                const projectTrans = transactionsForProjectMetrics(project);
                 // Tổng đã giải ngân (bao gồm cả giải ngân hoàn toàn và rút một phần)
                 const disbursedFull = projectTrans
                   .filter(t => t.status === TransactionStatus.DISBURSED)
@@ -661,7 +750,7 @@ export const Projects: React.FC<ProjectsProps> = ({
                     </td>
                     <td className="px-4 py-3 text-right font-bold text-slate-800 border-r border-slate-200">
                       {formatCurrency(actualTotalBudget)}
-                      {actualTotalBudget !== project.totalBudget && (
+                      {elevated && actualTotalBudget !== project.totalBudget && (
                         <span className="text-[10px] text-slate-500 block font-normal">
                           Giá trị đầu: {formatCurrency(project.totalBudget)}
                         </span>
@@ -686,7 +775,7 @@ export const Projects: React.FC<ProjectsProps> = ({
                         {elevated && needsElevatedReview && (
                           <button
                             type="button"
-                            onClick={() => handleApproveTemplate(project)}
+                            onClick={() => openApproveDialog(project)}
                             className="p-1.5 text-emerald-700 hover:bg-emerald-100 rounded-lg transition-all border border-emerald-200"
                             title="Duyệt template / giao dịch import"
                           >
@@ -1060,6 +1149,121 @@ export const Projects: React.FC<ProjectsProps> = ({
                   </button>
                 </div>
               )}
+            </div>
+          </GlassCard>
+        </div>
+      )}
+
+      {approveTarget && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+          <GlassCard className="w-full max-w-4xl max-h-[90vh] overflow-hidden flex flex-col bg-white shadow-2xl border border-slate-200">
+            <div className="p-5 border-b border-slate-200 bg-emerald-50/80 flex justify-between items-start gap-3">
+              <div>
+                <h3 className="text-lg font-black text-emerald-900">Xác nhận duyệt dự án / giao dịch import</h3>
+                <p className="text-sm font-bold text-slate-700 mt-1">
+                  {approveTarget.code} — {approveTarget.name}
+                </p>
+                <p className="text-xs text-slate-600 mt-2 font-medium">
+                  Sau khi duyệt, dự án và các hồ sơ dưới đây được tính vào báo cáo; giao dịch chờ merge sẽ mở khóa chỉnh sửa theo quyền thông thường. Giao dịch chờ duyệt không hiển thị ở tab Giao dịch cho đến khi duyệt.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => !approveSubmitting && !rejectSubmitting && setApproveTarget(null)}
+                className="p-2 rounded-lg hover:bg-white/80 text-slate-500"
+                aria-label="Đóng"
+              >
+                <X size={22} />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-auto p-4">
+              {approvePreviewRows.length === 0 ? (
+                <p className="text-sm text-slate-600 font-medium text-center py-8">
+                  Không có dòng giao dịch chi tiết trong bộ nhớ tạm — vẫn có thể duyệt hiển thị template dự án nếu đây là dự án chỉ chờ duyệt cấu hình.
+                </p>
+              ) : (
+                <>
+                  <div className="overflow-x-auto rounded-lg border border-slate-200">
+                    <table className="w-full text-left text-xs border-collapse min-w-[720px]">
+                      <thead className="bg-slate-100 text-[10px] uppercase font-bold text-slate-600 border-b border-slate-200">
+                        <tr>
+                          <th className="px-3 py-2 border-r border-slate-200 text-center w-10">STT</th>
+                          <th className="px-3 py-2 border-r border-slate-200">Mã GD</th>
+                          <th className="px-3 py-2 border-r border-slate-200">Hộ / CCCD</th>
+                          <th className="px-3 py-2 border-r border-slate-200">Số QĐ</th>
+                          <th className="px-3 py-2 border-r border-slate-200">Loại chi</th>
+                          <th className="px-3 py-2 text-right border-r border-slate-200">Tổng phê duyệt</th>
+                          <th className="px-3 py-2 text-center">Trạng thái</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-200">
+                        {approvePreviewRows.map((t, idx) => (
+                          <tr key={t.id} className="hover:bg-slate-50/80">
+                            <td className="px-3 py-2 border-r border-slate-100 text-center font-bold text-slate-500">{idx + 1}</td>
+                            <td className="px-3 py-2 border-r border-slate-100 font-mono text-[10px] text-slate-700">{t.id}</td>
+                            <td className="px-3 py-2 border-r border-slate-100">
+                              <span className="font-bold text-slate-800">{t.household?.name || '—'}</span>
+                              <span className="block text-[10px] text-slate-500 font-mono">{t.household?.cccd || '—'}</span>
+                            </td>
+                            <td className="px-3 py-2 border-r border-slate-100">{t.household?.decisionNumber || '—'}</td>
+                            <td className="px-3 py-2 border-r border-slate-100">{t.paymentType || '—'}</td>
+                            <td className="px-3 py-2 text-right font-bold text-emerald-800 border-r border-slate-100">
+                              {formatCurrency(t.compensation?.totalApproved || 0)}
+                            </td>
+                            <td className="px-3 py-2 text-center text-[10px] font-bold">
+                              {(t as { staffImportPending?: boolean }).staffImportPending ? (
+                                <span className="text-amber-800 bg-amber-100 px-2 py-0.5 rounded border border-amber-200">Chờ duyệt import</span>
+                              ) : (
+                                <span className="text-slate-600 bg-slate-100 px-2 py-0.5 rounded border border-slate-200">{t.status}</span>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-emerald-200 bg-emerald-50/50 px-4 py-3">
+                    <div className="text-sm font-bold text-slate-800">
+                      Tổng số hồ sơ: <span className="text-emerald-900">{approvePreviewRows.length}</span>
+                    </div>
+                    <div className="text-sm font-black text-emerald-900">
+                      Tổng tiền phê duyệt: {formatCurrency(approvePreviewTotal)}
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+
+            <div className="p-4 border-t border-slate-200 bg-slate-50 flex flex-wrap justify-end gap-2">
+              {rejectablePendingCount > 0 && (
+                <button
+                  type="button"
+                  disabled={approveSubmitting || rejectSubmitting}
+                  onClick={() => void confirmRejectPendingImport()}
+                  className="px-4 py-2 rounded-lg border border-rose-300 bg-rose-50 text-sm font-black text-rose-900 hover:bg-rose-100 disabled:opacity-50 mr-auto"
+                >
+                  {rejectSubmitting ? <Loader2 size={16} className="animate-spin inline mr-1" /> : null}
+                  Từ chối ({rejectablePendingCount} hồ sơ)
+                </button>
+              )}
+              <button
+                type="button"
+                disabled={approveSubmitting || rejectSubmitting}
+                onClick={() => setApproveTarget(null)}
+                className="px-4 py-2 rounded-lg border border-slate-300 text-sm font-bold text-slate-700 hover:bg-white disabled:opacity-50"
+              >
+                Hủy
+              </button>
+              <button
+                type="button"
+                disabled={approveSubmitting || rejectSubmitting}
+                onClick={() => void confirmApproveTemplate()}
+                className="px-5 py-2 rounded-lg bg-emerald-600 text-white text-sm font-black hover:bg-emerald-700 disabled:opacity-50 flex items-center gap-2"
+              >
+                {approveSubmitting ? <Loader2 size={16} className="animate-spin" /> : <ShieldCheck size={16} />}
+                Xác nhận duyệt
+              </button>
             </div>
           </GlassCard>
         </div>

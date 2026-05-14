@@ -99,6 +99,12 @@ const App: React.FC = () => {
     });
   }, [projects, transactions, currentUser]);
 
+  /** Tab Giao dịch: ẩn toàn bộ GD import/merge đang chờ duyệt (chỉ duyệt/từ chối tại Quản lý dự án). */
+  const transactionsTabList = useMemo(
+    () => transactions.filter((t) => !(t as { staffImportPending?: boolean }).staffImportPending),
+    [transactions]
+  );
+
   const mayFetchAdminBundles = useCallback((viewer?: User | null) => {
     return !!(viewer && userCanAccessAdminWorkspaceTab(viewer));
   }, []);
@@ -209,6 +215,14 @@ const App: React.FC = () => {
       }
     }
   }, [transactions, selectedTransaction]);
+
+  /** GD chờ duyệt không còn trên tab Giao dịch — đóng modal nếu đang mở. */
+  useEffect(() => {
+    if (activeTab !== 'transactions' || !selectedTransaction) return;
+    if ((selectedTransaction as { staffImportPending?: boolean }).staffImportPending) {
+      setSelectedTransaction(null);
+    }
+  }, [activeTab, selectedTransaction]);
 
   // Trigger monthly bank interest accrual — 1 lần mỗi user.id, không ép chạy lại khi loadAllData đổi reference
   useEffect(() => {
@@ -502,7 +516,7 @@ const App: React.FC = () => {
         />;
       case 'transactions':
         return <TransactionList
-          transactions={transactions}
+          transactions={transactionsTabList}
           projects={projects}
           interestRate={interestRate}
           interestRateChangeDate={interestRateChangeDate}
