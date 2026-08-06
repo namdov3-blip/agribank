@@ -270,7 +270,7 @@ export const PrintPhieuChi: React.FC<PrintPhieuChiProps> = ({
     const getOrgHeader = () => {
         const org = currentUser.organization || 'Đông Anh';
         const headers: Record<string, { name: string; address: string }> = {
-            'Đông Anh': { name: 'UBND xã Đông Anh', address: 'Số 68 đường Cao Lỗ, xã Đông Anh, Hà Nội' },
+            'Đông Anh': { name: 'UBND xã Đông Anh', address: 'Thôn Đông Anh, xã Đông Anh, TP Hà Nội' },
             'Phúc Thịnh': { name: 'UBND xã Phúc Thịnh', address: 'Xã Phúc Thịnh, Hà Nội' },
             'Thiên Lộc': { name: 'UBND xã Thiên Lộc', address: 'Xã Thiên Lộc, Hà Nội' },
             'Thư Lâm': { name: 'UBND xã Thư Lâm', address: 'Xã Thư Lâm, Hà Nội' },
